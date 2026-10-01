@@ -6,6 +6,7 @@ import { useTripsStore } from '../stores/trips'
 import { exportTripFile, readTripFileInput, readTripFile, TripImportError } from '../utils/tripFile'
 import { fenToYuan, yuanToFen } from '../utils/money'
 import type { DestType, Trip } from '../schema/trip'
+import AiDraftModal from '../components/AiDraftModal.vue'
 
 const router = useRouter()
 const tripsStore = useTripsStore()
@@ -161,6 +162,16 @@ function addDays(dateStr: string, n: number): string {
 }
 
 const isEmpty = computed(() => tripsStore.loaded && tripsStore.trips.length === 0)
+
+// ---- AI 草稿入口 ----
+const showAi = ref(false)
+const aiOnline = ref(navigator.onLine)
+
+function updateOnline() {
+  aiOnline.value = navigator.onLine
+}
+window.addEventListener('online', updateOnline)
+window.addEventListener('offline', updateOnline)
 </script>
 
 <template>
@@ -168,6 +179,9 @@ const isEmpty = computed(() => tripsStore.loaded && tripsStore.trips.length === 
     <div class="page-header">
       <h1>我的旅行</h1>
       <div class="header-actions">
+        <n-button :disabled="!aiOnline" @click="showAi = true" :title="aiOnline ? '' : '断网时 AI 功能不可用'">
+          ✨ AI 行程草稿
+        </n-button>
         <n-button @click="pickFile">导入 .trip</n-button>
         <n-button type="primary" @click="openCreate">+ 新建旅行</n-button>
       </div>
@@ -260,6 +274,8 @@ const isEmpty = computed(() => tripsStore.loaded && tripsStore.trips.length === 
         </div>
       </template>
     </n-modal>
+    <!-- AI 行程草稿 -->
+    <AiDraftModal v-model:show="showAi" />
   </div>
 </template>
 
