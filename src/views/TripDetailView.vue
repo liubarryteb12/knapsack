@@ -7,6 +7,7 @@ import TimelineTab from '../components/TimelineTab.vue'
 import BudgetTab from '../components/BudgetTab.vue'
 import PackingTab from '../components/PackingTab.vue'
 import NotesTab from '../components/NotesTab.vue'
+import WeatherStrip from '../components/WeatherStrip.vue'
 import type { Trip } from '../schema/trip'
 
 const route = useRoute()
@@ -28,6 +29,7 @@ const tab = ref('timeline')
 
     <n-tabs v-model:value="tab" type="line" animated>
       <n-tab-pane name="timeline" tab="行程">
+        <WeatherStrip :trip="trip" />
         <TimelineTab :trip="trip" />
       </n-tab-pane>
       <n-tab-pane v-if="trip.enabledModules.expenses" name="budget" tab="预算">
