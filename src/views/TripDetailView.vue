@@ -1,21 +1,64 @@
 <script setup lang="ts">
-// 旅行详情页：阶段3/4/5/6 在此扩展时间轴、预算、行李、备忘
+import { computed, ref } from 'vue'
+import { useRoute } from 'vue-router'
+import { NTabs, NTabPane } from 'naive-ui'
+import { useTripsStore } from '../stores/trips'
+import TimelineTab from '../components/TimelineTab.vue'
+import BudgetTab from '../components/BudgetTab.vue'
+import PackingTab from '../components/PackingTab.vue'
+import NotesTab from '../components/NotesTab.vue'
+import type { Trip } from '../schema/trip'
+
+const route = useRoute()
+const tripsStore = useTripsStore()
+const tripId = computed(() => String(route.params.id))
+const trip = computed<Trip | undefined>(() => tripsStore.trips.find((t) => t.id === tripId.value))
+
+const tab = ref('timeline')
 </script>
 
 <template>
-  <div class="page">
-    <h1>旅行详情</h1>
-    <p class="placeholder">阶段3 起实现：时间轴、预算、行李、备忘</p>
+  <div v-if="trip" class="page">
+    <div class="page-header">
+      <div>
+        <h1>{{ trip.name }}</h1>
+        <p class="muted">{{ trip.startDate }} ~ {{ trip.endDate }}<span v-if="trip.destCity"> · {{ trip.destCity }}</span></p>
+      </div>
+    </div>
+
+    <n-tabs v-model:value="tab" type="line" animated>
+      <n-tab-pane name="timeline" tab="行程">
+        <TimelineTab :trip="trip" />
+      </n-tab-pane>
+      <n-tab-pane v-if="trip.enabledModules.expenses" name="budget" tab="预算">
+        <BudgetTab :trip="trip" />
+      </n-tab-pane>
+      <n-tab-pane name="packing" tab="行李">
+        <PackingTab :trip="trip" />
+      </n-tab-pane>
+      <n-tab-pane v-if="trip.enabledModules.notes" name="notes" tab="备忘">
+        <NotesTab :trip="trip" />
+      </n-tab-pane>
+    </n-tabs>
+  </div>
+  <div v-else class="page">
+    <p class="muted">旅行不存在或正在加载…</p>
   </div>
 </template>
 
 <style scoped>
 .page {
   padding: 24px;
+  max-width: 1000px;
+  margin: 0 auto;
 }
 
-.placeholder {
+.page-header {
+  margin-bottom: 12px;
+}
+
+.muted {
   color: #9ca3af;
-  margin-top: 12px;
+  font-size: 13px;
 }
 </style>
