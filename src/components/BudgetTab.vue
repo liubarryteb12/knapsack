@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import {
-  NButton, NModal, NForm, NFormItem, NInput, NSelect, NDatePicker,
-  NCheckboxGroup, NCheckbox, NInputNumber, NCard, NProgress, NEmpty, NDropdown,
-} from 'naive-ui'
+import { NButton, NModal, NForm, NFormItem, NInput, NSelect, NDatePicker,
+  NCheckboxGroup, NCheckbox, NInputNumber, NCard, NProgress, NEmpty, NDropdown, useMessage } from 'naive-ui'
 import type { Trip, Expense, ExpenseCategory, Member } from '../schema/trip'
 import { nanoid } from 'nanoid'
 import { useTripsStore } from '../stores/trips'
@@ -11,9 +9,12 @@ import { fenToYuan, yuanToFen, formatFen } from '../utils/money'
 import { settleExpenses, memberName } from '../utils/settle'
 import { expenseCategoryOptions, expenseCategoryLabel } from './itemMeta'
 import { readTripFileInput, TripImportError } from '../utils/tripFile'
+import { expenseSchema } from '../schema/trip'
+import { todayStr, fromDateStr, toDateStr } from '../utils/date'
 
 const props = defineProps<{ trip: Trip }>()
 const tripsStore = useTripsStore()
+const message = useMessage()
 
 // ---- 汇总 ----
 const totalUsedFen = computed(() => props.trip.expenses.reduce((a, e) => a + e.amountFen, 0))
@@ -100,11 +101,15 @@ async function submitExpense() {
   if (!title) return
   const amountFen = yuanToFen(form.value.amountYuan)
   if (amountFen === null) {
-    window.alert('金额格式不对，请输入例如 292.50')
+    message.error('金额格式不对，请输入例如 292.50')
     return
   }
   if (form.value.mode !== 'custom' && form.value.memberIds.length === 0) {
-    window.alert('请至少选择一名分摊成员')
+    message.error('请至少选择一名分摊成员')
+    return
+  }
+  if (form.value.payerId && !props.trip.members.some((m) => m.id === form.value.payerId)) {
+    message.error('付款人无效，请重新选择')
     return
   }
 
@@ -112,16 +117,26 @@ async function submitExpense() {
   if (form.value.mode === 'equal') {
     split = { mode: 'equal', memberIds: [...form.value.memberIds] }
   } else if (form.value.mode === 'shares') {
+    // 份数与 memberIds 一一对应：勾选变化时按索引映射，缺省 1 份
+    const sharesById = new Map<string, number>()
+    for (let i = 0; i < form.value.memberIds.length; i++) {
+      const id = form.value.memberIds[i]
+      if (id !== undefined) sharesById.set(id, Math.max(1, form.value.shares[i] ?? 1))
+    }
     split = {
       mode: 'shares',
       memberIds: [...form.value.memberIds],
-      shares: form.value.memberIds.map((_, i) => Math.max(1, form.value.shares[i] ?? 1)),
+      shares: form.value.memberIds.map((id) => sharesById.get(id) ?? 1),
     }
   } else {
     const amounts: Record<string, number> = {}
     for (const [id, yuan] of Object.entries(form.value.customAmounts)) {
       const fen = yuanToFen(yuan ?? '0')
       if (fen !== null && fen > 0) amounts[id] = fen
+    }
+    if (Object.keys(amounts).length === 0) {
+      message.error('自定义金额至少填一人，且金额大于 0')
+      return
     }
     split = { mode: 'custom', amounts }
   }
@@ -170,7 +185,18 @@ async function addMember() {
 async function removeMember(id: string) {
   const member = props.trip.members.find((m) => m.id === id)
   if (member?.role === 'owner') {
-    window.alert('不能删除发起人')
+    message.error('不能删除发起人')
+    return
+  }
+  // 该成员被花费引用（付款人/分摊人）时不允许删，避免结算出现幽灵成员
+  const referenced = props.trip.expenses.some(
+    (e) =>
+      e.payerId === id ||
+      (e.split.mode !== 'custom' && e.split.memberIds.includes(id)) ||
+      (e.split.mode === 'custom' && (e.split.amounts[id] ?? 0) > 0),
+  )
+  if (referenced) {
+    message.error('该成员已有花费记录，无法删除。请先删除或修改相关花费')
     return
   }
   props.trip.members = props.trip.members.filter((m) => m.id !== id)
@@ -196,30 +222,33 @@ async function onMergeFile(e: Event) {
     const text = await readTripFileInput(file)
     const data = JSON.parse(text) as { expenses?: unknown }
     if (!Array.isArray(data.expenses)) {
-      window.alert('文件里没有 expenses 数组，无法合并')
+      message.error('文件里没有 expenses 数组，无法合并')
       return
     }
-    const incoming = data.expenses as Expense[]
+    // 每笔花费先过 Zod，坏数据跳过而不是静默写入
+    const incoming: Expense[] = []
+    let badCount = 0
+    for (const raw of data.expenses) {
+      const parsed = expenseSchema.safeParse(raw)
+      if (parsed.success) incoming.push(parsed.data)
+      else badCount++
+    }
     const existingIds = new Set(props.trip.expenses.map((x) => x.id))
     let added = 0
     for (const e of incoming) {
-      if (e && typeof e === 'object' && typeof (e as Expense).id === 'string' && !existingIds.has((e as Expense).id)) {
-        props.trip.expenses.push(e as Expense)
-        existingIds.add((e as Expense).id)
+      if (!existingIds.has(e.id)) {
+        props.trip.expenses.push(e)
+        existingIds.add(e.id)
         added++
       }
     }
     await tripsStore.saveTrip(props.trip)
-    window.alert(`合并完成：新增 ${added} 笔，跳过重复 ${incoming.length - added} 笔`)
+    const skippedDup = data.expenses.length - badCount - added
+    message.success(`合并完成：新增 ${added} 笔，跳过重复 ${skippedDup} 笔${badCount > 0 ? `，丢弃损坏 ${badCount} 笔` : ''}`)
   } catch (err) {
-    if (err instanceof TripImportError) window.alert(err.message)
-    else window.alert('合并失败：文件格式不对')
+    if (err instanceof TripImportError) message.error(err.message)
+    else message.error('合并失败：文件格式不对')
   }
-}
-
-function todayStr(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 const expenseActions = [
@@ -325,9 +354,9 @@ async function onExpenseAction(key: string, e: Expense) {
       <n-form label-placement="left" label-width="80">
         <n-form-item label="日期">
           <n-date-picker
-            :value="new Date(form.date + 'T00:00:00').getTime()"
+            :value="fromDateStr(form.date)"
             type="date"
-            @update:value="(ts: number) => (form.date = new Date(ts).toISOString().slice(0, 10))"
+            @update:value="(ts: number) => (form.date = toDateStr(new Date(ts)))"
             style="width: 100%"
           />
         </n-form-item>

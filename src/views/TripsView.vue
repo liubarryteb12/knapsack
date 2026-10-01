@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, onBeforeUnmount, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { NButton, NCard, NEmpty, NModal, NForm, NFormItem, NInput, NSelect, NPopconfirm, useMessage } from 'naive-ui'
+import { NButton, NCard, NEmpty, NModal, NForm, NFormItem, NInput, NSelect, NPopconfirm, NDatePicker, useMessage } from 'naive-ui'
 import { useTripsStore } from '../stores/trips'
 import { exportTripFile, readTripFileInput, readTripFile, TripImportError } from '../utils/tripFile'
 import { fenToYuan, yuanToFen } from '../utils/money'
+import { todayStr, addDays, daysBetween, fromDateStr, toDateStr } from '../utils/date'
 import type { DestType, Trip } from '../schema/trip'
 import AiDraftModal from '../components/AiDraftModal.vue'
 
@@ -135,9 +136,7 @@ function doExport(trip: Trip) {
 
 // ---- 展示辅助 ----
 function daysOf(trip: Trip): number {
-  const start = new Date(trip.startDate + 'T00:00:00')
-  const end = new Date(trip.endDate + 'T00:00:00')
-  return Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1)
+  return daysBetween(trip.startDate, trip.endDate)
 }
 
 function budgetPct(trip: Trip): number {
@@ -150,17 +149,6 @@ function usedFen(trip: Trip): number {
   return trip.expenses.reduce((a, e) => a + e.amountFen, 0)
 }
 
-function todayStr(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-
-function addDays(dateStr: string, n: number): string {
-  const d = new Date(dateStr + 'T00:00:00')
-  d.setDate(d.getDate() + n)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-
 const isEmpty = computed(() => tripsStore.loaded && tripsStore.trips.length === 0)
 
 // ---- AI 草稿入口 ----
@@ -170,8 +158,16 @@ const aiOnline = ref(navigator.onLine)
 function updateOnline() {
   aiOnline.value = navigator.onLine
 }
-window.addEventListener('online', updateOnline)
-window.addEventListener('offline', updateOnline)
+
+onMounted(() => {
+  window.addEventListener('online', updateOnline)
+  window.addEventListener('offline', updateOnline)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('online', updateOnline)
+  window.removeEventListener('offline', updateOnline)
+})
 </script>
 
 <template>
@@ -236,10 +232,20 @@ window.addEventListener('offline', updateOnline)
           <n-input v-model:value="createForm.name" placeholder="例如：五一杭州行" />
         </n-form-item>
         <n-form-item label="开始日期">
-          <n-input v-model:value="createForm.startDate" type="text" placeholder="yyyy-MM-dd" />
+          <n-date-picker
+            :value="fromDateStr(createForm.startDate)"
+            type="date"
+            style="width: 100%"
+            @update:value="(ts: number) => (createForm.startDate = toDateStr(new Date(ts)))"
+          />
         </n-form-item>
         <n-form-item label="结束日期">
-          <n-input v-model:value="createForm.endDate" type="text" placeholder="yyyy-MM-dd" />
+          <n-date-picker
+            :value="fromDateStr(createForm.endDate)"
+            type="date"
+            style="width: 100%"
+            @update:value="(ts: number) => (createForm.endDate = toDateStr(new Date(ts)))"
+          />
         </n-form-item>
         <n-form-item label="类型">
           <n-select v-model:value="createForm.destType" :options="destTypeOptions" />

@@ -16,7 +16,6 @@ const tripsStore = useTripsStore()
 const history = useHistoryStore()
 
 const activeDay = ref(0)
-const sortableInstances: Sortable[] = []
 
 watch(
   () => props.trip.id,
@@ -130,56 +129,72 @@ const canUndo = computed(() => history.canUndo(props.trip.id))
 const canRedo = computed(() => history.canRedo(props.trip.id))
 
 // ---- 拖拽（天内排序 + 跨天移动） ----
-let dragFromDay = -1
-let dragFromIndex = -1
+// 数据模型是唯一事实源：Sortable 拖完后先还原 DOM，再用数据驱动重渲染，
+// 避免 Sortable 手改 DOM 与 Vue vdom 状态错位。
+const timelineRoot = ref<HTMLElement | null>(null)
+const sortableInstances: Sortable[] = []
 
-function setupSortable(el: HTMLElement, dayIndex: number) {
-  const sortable = Sortable.create(el, {
-    group: 'timeline-items',
-    animation: 150,
-    handle: '.item-drag-handle',
-    ghostClass: 'drag-ghost',
-    onStart(evt) {
-      dragFromDay = dayIndex
-      dragFromIndex = evt.oldIndex ?? -1
-    },
-    async onEnd(evt) {
-      const toDay = dayIndexOfEl(evt.to)
-      const toIndex = evt.newIndex ?? -1
-      if (dragFromDay < 0 || dragFromIndex < 0 || toDay < 0 || toIndex < 0) return
-      if (dragFromDay === toDay && dragFromIndex === toIndex) return
-      await moveItem(dragFromDay, dragFromIndex, toDay, toIndex)
-      dragFromDay = -1
-      dragFromIndex = -1
-    },
+function setupAllSortable() {
+  sortableInstances.forEach((s) => s.destroy())
+  sortableInstances.length = 0
+  if (!timelineRoot.value) return
+  timelineRoot.value.querySelectorAll<HTMLElement>('.day-items').forEach((el) => {
+    const dayIndex = Number(el.dataset.day ?? -1)
+    if (dayIndex < 0) return
+    sortableInstances.push(
+      Sortable.create(el, {
+        group: 'timeline-items',
+        animation: 150,
+        handle: '.item-drag-handle',
+        ghostClass: 'drag-ghost',
+        onEnd(evt) {
+          const fromDay = dayIndex
+          const fromIndex = evt.oldIndex ?? -1
+          const toEl = evt.to as HTMLElement | null
+          const toDay = toEl ? Number(toEl.dataset.day ?? -1) : -1
+          const itemEl = evt.item as HTMLElement
+          const itemId = itemEl.dataset.id ?? ''
+          // 还原 DOM：把拖动的元素放回原位，交给 Vue 重渲染
+          if (evt.from !== evt.to) {
+            const originFrom = evt.from as HTMLElement
+            if (evt.clone && evt.clone.parentNode === evt.to) {
+              // 跨容器时 Sortable 留了 clone，清掉
+              evt.item.remove()
+            }
+            originFrom.insertBefore(evt.item, originFrom.children[fromIndex] ?? null)
+          } else if (evt.oldIndex !== evt.newIndex) {
+            const ref = evt.from.children[evt.oldIndex ?? evt.from.children.length] ?? null
+            evt.from.insertBefore(evt.item, ref)
+          }
+          if (fromDay < 0 || fromIndex < 0 || toDay < 0 || itemId === '') return
+          if (fromDay === toDay && evt.oldIndex === evt.newIndex) return
+          void moveItem(fromDay, fromIndex, toDay, evt.newIndex ?? -1, itemId)
+        },
+      }),
+    )
   })
-  sortableInstances.push(sortable)
 }
 
-function dayIndexOfEl(el: HTMLElement): number {
-  const dayBlock = el.closest('.day-items')
-  if (!dayBlock) return -1
-  const idx = Array.from(document.querySelectorAll('.day-items')).indexOf(dayBlock)
-  return idx
-}
-
-async function moveItem(fromDay: number, fromIndex: number, toDay: number, toIndex: number) {
+async function moveItem(fromDay: number, fromIndex: number, toDay: number, toIndex: number, itemId: string) {
   await pushHistoryAndSave(() => {
     const src = props.trip.days[fromDay]
     const dst = props.trip.days[toDay]
-    const item = src?.items[fromIndex]
-    if (!src || !dst || !item) return
-    src.items.splice(fromIndex, 1)
-    dst.items.splice(toIndex, 0, item)
+    if (!src || !dst) return
+    // 用 id 定位条目，避免索引在 DOM 还原后漂移
+    const idx = src.items.findIndex((it) => it.id === itemId)
+    const item = idx >= 0 ? src.items[idx] : src.items[fromIndex]
+    if (item === undefined) return
+    const realFrom = idx >= 0 ? idx : fromIndex
+    src.items.splice(realFrom, 1)
+    // 目标索引按"移除后"的语义修正：同天且移除位在插入位前，插到位移一
+    let insertAt = toIndex
+    if (fromDay === toDay && realFrom < toIndex) insertAt = toIndex - 1
+    dst.items.splice(Math.max(0, Math.min(insertAt, dst.items.length)), 0, item)
   }, '移动条目')
 }
 
 onMounted(() => {
-  nextTick(() => {
-    document.querySelectorAll<HTMLElement>('.day-items').forEach((el, i) => {
-      setupSortable(el, i)
-    })
-  })
+  nextTick(setupAllSortable)
 })
 
 onBeforeUnmount(() => {
@@ -211,7 +226,7 @@ async function onRowAction(key: string, index: number) {
 
     <n-empty v-if="trip.days.length === 0" description="没有行程日期，请检查起止日期" class="empty" />
 
-    <div class="timeline">
+    <div ref="timelineRoot" class="timeline">
       <div
         v-for="(day, di) in trip.days"
         :key="day.date"
@@ -225,7 +240,7 @@ async function onRowAction(key: string, index: number) {
           <span class="day-count">{{ day.items.length }} 项</span>
         </div>
         <div class="day-items" :data-day="di">
-          <div v-for="(item, ii) in day.items" :key="item.id" class="item-row" :class="{ done: item.done }">
+          <div v-for="(item, ii) in day.items" :key="item.id" :data-id="item.id" class="item-row" :class="{ done: item.done }">
             <span class="item-drag-handle" title="拖拽排序">⋮⋮</span>
             <n-checkbox :checked="item.done" @click.stop="toggleDone(item)" />
             <span class="item-icon">{{ typeIcon[item.type] }}</span>

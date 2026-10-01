@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { NTabs, NTabPane } from 'naive-ui'
 import { useTripsStore } from '../stores/trips'
@@ -16,6 +16,16 @@ const tripId = computed(() => String(route.params.id))
 const trip = computed<Trip | undefined>(() => tripsStore.trips.find((t) => t.id === tripId.value))
 
 const tab = ref('timeline')
+
+// 直达路由（刷新/分享链接）时 store 尚未加载，先 load 再兜底查库
+onMounted(async () => {
+  if (!tripsStore.loaded) await tripsStore.load()
+})
+
+watch(tripId, async () => {
+  tab.value = 'timeline'
+  if (!tripsStore.loaded) await tripsStore.load()
+})
 </script>
 
 <template>

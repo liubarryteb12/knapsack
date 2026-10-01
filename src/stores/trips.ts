@@ -7,6 +7,7 @@ import {
   type NewTripInput,
 } from '../schema/trip'
 import { nanoid } from 'nanoid'
+import { regenerateAllIds } from '../utils/regenerateIds'
 
 /** 旅行列表 + 当前旅行 store：所有写入走 Dexie 持久化 */
 export const useTripsStore = defineStore('trips', {
@@ -40,7 +41,7 @@ export const useTripsStore = defineStore('trips', {
       return remote
     },
 
-    /** 保存整个旅行对象（已在调用方做过业务修改） */
+    /** 保存整个旅行对象（已在调用方做过业务修改），写前过 Zod 防线 */
     async saveTrip(trip: Trip) {
       const parsed = tripSchema.parse(trip)
       await db.trips.put(parsed)
@@ -67,7 +68,7 @@ export const useTripsStore = defineStore('trips', {
       return copy
     },
 
-    /** 导入：overwrite 用相同 id 覆盖；asNew 生成全新 id */
+    /** 导入：overwrite 用相同 id 覆盖；asNew 生成全新 id 并重挂所有引用 */
     async importTrip(trip: Trip, mode: 'overwrite' | 'asNew'): Promise<Trip> {
       const target: Trip = JSON.parse(JSON.stringify(trip))
       if (mode === 'asNew') {
@@ -83,15 +84,3 @@ export const useTripsStore = defineStore('trips', {
     },
   },
 })
-
-/** 深拷贝后重建所有 id，避免副本与原旅行冲突 */
-function regenerateAllIds(trip: Trip) {
-  for (const day of trip.days) {
-    for (const item of day.items) item.id = nanoid(10)
-  }
-  for (const e of trip.expenses) e.id = nanoid(10)
-  for (const g of trip.packing) {
-    for (const item of g.items) item.id = nanoid(10)
-  }
-  for (const m of trip.members) m.id = nanoid(8)
-}

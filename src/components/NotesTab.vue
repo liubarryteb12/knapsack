@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 import { NInput } from 'naive-ui'
 import type { Trip } from '../schema/trip'
 import { useTripsStore } from '../stores/trips'
@@ -7,16 +7,21 @@ import { useTripsStore } from '../stores/trips'
 const props = defineProps<{ trip: Trip }>()
 const tripsStore = useTripsStore()
 
-const text = computed(() => props.trip.notes)
-const draft = ref(text.value)
+const draft = ref(props.trip.notes)
 const savedText = ref('')
 const showSaved = ref(false)
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 let savedTimer: ReturnType<typeof setTimeout> | null = null
 
+// 切换旅行时：先冲刷旧旅行未保存的草稿，再载入新旅行内容
 watch(
   () => props.trip.id,
-  () => {
+  async (_newId, oldId) => {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer)
+      debounceTimer = null
+      await flushDraft(String(oldId))
+    }
     draft.value = props.trip.notes
   },
 )
@@ -25,17 +30,30 @@ watch(draft, (val) => {
   if (val === props.trip.notes) return
   if (debounceTimer) clearTimeout(debounceTimer)
   debounceTimer = setTimeout(async () => {
-    props.trip.notes = val
-    await tripsStore.saveTrip(props.trip)
-    savedText.value = '已自动保存'
-    showSaved.value = true
-    if (savedTimer) clearTimeout(savedTimer)
-    savedTimer = setTimeout(() => (showSaved.value = false), 2000)
+    debounceTimer = null
+    await flushDraft(props.trip.id)
   }, 1000) // 停止输入 1 秒后保存
 })
 
+/** 把当前草稿写回指定 id 的旅行（带 id 守卫，防止串写） */
+async function flushDraft(tripId: string) {
+  if (props.trip.id !== tripId) return
+  if (draft.value === props.trip.notes) return
+  props.trip.notes = draft.value
+  await tripsStore.saveTrip(props.trip)
+  savedText.value = '已自动保存'
+  showSaved.value = true
+  if (savedTimer) clearTimeout(savedTimer)
+  savedTimer = setTimeout(() => (showSaved.value = false), 2000)
+}
+
 onBeforeUnmount(() => {
-  if (debounceTimer) clearTimeout(debounceTimer)
+  // 卸载前冲刷未保存的草稿（同步判断，异步写入）
+  if (debounceTimer) {
+    clearTimeout(debounceTimer)
+    debounceTimer = null
+    void flushDraft(props.trip.id)
+  }
   if (savedTimer) clearTimeout(savedTimer)
 })
 </script>

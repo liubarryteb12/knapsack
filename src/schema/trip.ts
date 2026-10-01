@@ -91,8 +91,28 @@ export const enabledModulesSchema = z.object({
 /** 目的地类型：行李模板用 */
 export const destTypeSchema = z.enum(['city', 'beach', 'mountain', 'generic'])
 
-/** 分类预算：分类 → 整数分（部分分类可不设） */
-export const categoryBudgetsSchema = z.record(expenseCategorySchema, z.number().int().min(0))
+/** 分类预算：分类 → 整数分（部分分类可不设，键必须是合法分类名） */
+export const categoryBudgetsSchema = z.record(
+  z.enum(['transport', 'stay', 'food', 'play', 'other']),
+  z.number().int().min(0),
+)
+
+/** 松开"全键必填"限制：Zod4 的 record(enum) 要求每个枚举键都有值，这里用
+ *  对象校验 + 键名过滤实现"部分键可选"语义 */
+export const partialCategoryBudgetsSchema = z
+  .record(z.string(), z.number().int().min(0))
+  .transform((rec) => {
+    const out: Partial<Record<ExpenseCategoryLike, number>> = {}
+    for (const [k, v] of Object.entries(rec)) {
+      if (isCategory(k)) out[k] = v
+    }
+    return out
+  })
+
+type ExpenseCategoryLike = 'transport' | 'stay' | 'food' | 'play' | 'other'
+function isCategory(k: string): k is ExpenseCategoryLike {
+  return ['transport', 'stay', 'food', 'play', 'other'].includes(k)
+}
 
 /** trip.v1 根 Schema */
 export const tripSchema = z.object({
@@ -106,10 +126,7 @@ export const tripSchema = z.object({
   destCity: z.string().default(''),
   /** 整数分 */
   totalBudgetFen: z.number().int().min(0).default(0),
-  categoryBudgetsFen: z.preprocess(
-    (v) => (v === undefined || v === null ? {} : v),
-    categoryBudgetsSchema,
-  ),
+  categoryBudgetsFen: partialCategoryBudgetsSchema.optional().transform((v) => v ?? {}),
   members: z.array(memberSchema).default([]),
   days: z.array(tripDaySchema).default([]),
   expenses: z.array(expenseSchema).default([]),
