@@ -1,0 +1,24 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+dist-ssr/
+
+# 本地环境
+*.local
+
+# 日志
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 编辑器 / 系统
+.idea/
+.DS_Store
+
+# Tauri / Capacitor 后续构建产物
+src-tauri/target/
+android/.gradle/
+android/app/build/
+ios/App/Pods/
