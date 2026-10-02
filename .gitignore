@@ -22,3 +22,6 @@ src-tauri/target/
 android/.gradle/
 android/app/build/
 ios/App/Pods/
+
+# 本地打包产物（安装包不入库，按文档自行构建）
+release/

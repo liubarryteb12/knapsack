@@ -13,6 +13,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/cli": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
     "@tauri-apps/api": "^2.12.1",
     "dexie": "^4.4.6",
     "naive-ui": "^2.45.3",

@@ -88,4 +88,94 @@ npx tsx scripts/test-settle.ts   # 结算引擎测试（金额守恒/分摊/贪�
 
 技术栈：Vue 3 + TypeScript strict + Vite + Pinia + Vue Router + Dexie(IndexedDB) + Zod + Sortable.js + Naive UI。
 
-后续规划：Tauri 2 桌面打包（Windows）、Capacitor 安卓打包、局域网会话共享。
+## 打包与安装
+
+### Windows 桌面版（Tauri 2）
+
+```bash
+npm run tauri build                      # 需 Rust + MSVC 工具链
+```
+
+产物：
+
+- 安装包 `src-tauri/target/release/bundle/nsis/Knapsack_0.1.0_x64-setup.exe`
+- 免安装单文件 `src-tauri/target/release/app.exe`
+
+安装后是独立桌面程序，数据存在本机 IndexedDB，断网全功能可用。
+
+### 安卓版（Capacitor）
+
+前置：**JDK 21**、Android SDK（platform-tools / build-tools / platforms）。
+Capacitor 的 Android 模块要求 `sourceCompatibility 21`，用 JDK 17 会报
+`错误: 无效的源发行版：21`。
+
+```bash
+npm run build                     # 生成 dist/
+npx cap sync android              # 把 web 产物与配置同步进 android 工程
+cd android
+.\gradlew.bat assembleDebug       # Windows；macOS/Linux 用 ./gradlew assembleDebug
+```
+
+产物：`android/app/build/outputs/apk/debug/app-debug.apk`
+（仓库另拷了一份到 `release/Knapsack-debug.apk`，`release/` 不入库）
+
+应用信息：包名 `com.liubarryteb12.knapsack`，minSdk 24（Android 7.0+），targetSdk 36。
+
+首次构建需联网下载 Gradle 与依赖。走代理时在 `~/.gradle/gradle.properties` 里加：
+
+```properties
+systemProp.http.proxyHost=127.0.0.1
+systemProp.http.proxyPort=7890
+systemProp.https.proxyHost=127.0.0.1
+systemProp.https.proxyPort=7890
+```
+
+生成 Release 签名包（可选）：`keytool` 生成 keystore → 在
+`android/app/build.gradle` 配 `signingConfigs.release` → `.\gradlew.bat assembleRelease`。
+
+## 红米 K40（HyperOS / MIUI）安装与保活设置
+
+K40 的系统默认限制后台与自启动，还拦截 adb/未知来源安装。按顺序做一遍，
+避免「用着用着数据像丢了」。
+
+### 1. 允许安装（安装前必做）
+
+`设置 → 更多设置 → 开发者选项`：
+
+- 打开 **「USB 调试」**
+- 打开 **「USB 调试（安全设置）」/「通过 USB 安装」** —— 不开这一步，用数据线
+  `adb install` 会报 `INSTALL_FAILED_USER_RESTRICTED: Install canceled by user`
+
+直接用手机装 APK 时，首次会提示“已屏蔽安装未知应用”，点「设置」→ 允许该来源即可。
+
+### 2. 关闭电池优化（必须）
+
+`设置 → 应用设置 → 应用管理 → 行囊 Knapsack → 省电策略` → 选 **无限制**
+（不要选“智能限制后台运行”或“后台运行超过 10 分钟关闭”）。
+
+### 3. 允许自启动与后台弹出（必须）
+
+`设置 → 应用设置 → 应用管理 → 行囊 Knapsack → 权限管理`：
+
+- 打开「自启动」
+- 打开「后台弹出界面」（否则从别的应用切回来可能黑屏）
+- 「显示悬浮窗」按需开启
+
+再到 `设置 → 应用设置 → 授权管理 → 自启动管理`，确认 Knapsack 在允许列表内。
+
+### 4. 锁定最近任务
+
+打开多任务卡片视图，把 Knapsack 卡片**下拉或点小锁图标**锁定，防止一键清理时被清掉。
+
+### 5. 关掉省电模式与「不保留活动」
+
+`设置 → 电池 → 省电模式` 关闭；开发者选项里的「不保留活动」也要关，否则切后台即被销毁。
+
+### 6. 数据安全提醒
+
+- 数据存在 IndexedDB，**卸载应用会连数据一起删除**。重要行程随手用「导出 .trip」备份到手机存储或发给自己。
+- `设置 → 应用管理 → 行囊 Knapsack → 清除数据` 同样会清空行程，非必要不要点。
+
+## 后续规划
+
+局域网会话共享（同一 WiFi 下多设备同步一份行程）。
