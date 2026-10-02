@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { NButton, NCard, NEmpty, NModal, NForm, NFormItem, NInput, NSelect, NPopconfirm, NDatePicker, useMessage } from 'naive-ui'
+import { NButton, NModal, NForm, NFormItem, NInput, NSelect, NPopconfirm, NDatePicker, useMessage } from 'naive-ui'
+import { Sparkles, Download, Copy, Trash2, MapPin, Plus, FolderInput } from '@lucide/vue'
 import { useTripsStore } from '../stores/trips'
 import { exportTripFile, readTripFileInput, readTripFile, TripImportError } from '../utils/tripFile'
 import { checkAiReachable } from '../utils/aiConfig'
@@ -9,6 +10,12 @@ import { fenToYuan, yuanToFen } from '../utils/money'
 import { todayStr, addDays, daysBetween, fromDateStr, toDateStr } from '../utils/date'
 import type { DestType, Trip } from '../schema/trip'
 import AiDraftModal from '../components/AiDraftModal.vue'
+import UiPageHeader from '../components/ui/UiPageHeader.vue'
+import UiEmptyState from '../components/ui/UiEmptyState.vue'
+import UiStatusBadge from '../components/ui/UiStatusBadge.vue'
+import UiStatCard from '../components/ui/UiStatCard.vue'
+import { destTypeIcon } from '../components/icons'
+import { CalendarDays, Wallet, Compass } from '@lucide/vue'
 
 const router = useRouter()
 const tripsStore = useTripsStore()
@@ -24,13 +31,6 @@ const destTypeOptions = [
   { label: '山野', value: 'mountain' },
   { label: '通用', value: 'generic' },
 ]
-
-const destTypeLabel: Record<DestType, string> = {
-  city: '城市',
-  beach: '海边',
-  mountain: '山野',
-  generic: '通用',
-}
 
 // ---- 新建旅行 ----
 const showCreate = ref(false)
@@ -150,7 +150,27 @@ function usedFen(trip: Trip): number {
   return trip.expenses.reduce((a, e) => a + e.amountFen, 0)
 }
 
+/** 人性化日期：同年省略年份，如「10月2日 – 4日」 */
+function humanDate(trip: Trip): string {
+  const [sy, sm, sd] = trip.startDate.split('-')
+  const [, em, ed] = trip.endDate.split('-')
+  const year = new Date().getFullYear().toString()
+  const start = `${Number(sm)}月${Number(sd)}日`
+  const end = sm === em ? `${Number(ed)}日` : `${Number(em)}月${Number(ed)}日`
+  const y = sy === year ? '' : `${sy}年`
+  return `${y}${start} – ${end}`
+}
+
+// ---- 统计行 ----
 const isEmpty = computed(() => tripsStore.loaded && tripsStore.trips.length === 0)
+const totalCount = computed(() => tripsStore.trips.length)
+const ongoingCount = computed(() => {
+  const today = todayStr()
+  return tripsStore.trips.filter((t) => t.startDate <= today && t.endDate >= today).length
+})
+const totalSpentYuan = computed(() =>
+  fenToYuan(tripsStore.trips.reduce((a, t) => a + t.expenses.reduce((x, e) => x + e.amountFen, 0), 0)),
+)
 
 // ---- AI 草稿入口 ----
 const showAi = ref(false)
@@ -190,58 +210,89 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page">
-    <div class="page-header">
-      <h1>我的旅行</h1>
-      <div class="header-actions">
-        <n-button :disabled="!aiOnline" @click="showAi = true" :title="aiOnline ? '' : '断网时 AI 功能不可用'">
-          ✨ AI 行程草稿
-        </n-button>
-        <n-button @click="pickFile">导入 .trip</n-button>
-        <n-button type="primary" @click="openCreate">+ 新建旅行</n-button>
+    <UiPageHeader title="我的旅行">
+      <n-button :disabled="!aiOnline" @click="showAi = true" :title="aiOnline ? '' : '断网时 AI 功能不可用'">
+        <template #icon><Sparkles :size="15" /></template>
+        AI 行程草稿
+      </n-button>
+      <n-button @click="pickFile">
+        <template #icon><FolderInput :size="15" /></template>
+        导入 .trip
+      </n-button>
+      <n-button type="primary" @click="openCreate">
+        <template #icon><Plus :size="15" /></template>
+        新建旅行
+      </n-button>
+    </UiPageHeader>
+    <input ref="fileInput" type="file" accept=".trip,.json" style="display: none" @change="onFilePicked" />
+
+    <!-- 空状态：主行动 + 局域网会话引导（扫码入口在这里可见） -->
+    <UiEmptyState
+      v-if="isEmpty"
+      title="还没有旅行计划"
+      description="新建一个，用 AI 生成草稿，或者导入朋友分享的 .trip 文件；电脑和手机还能通过局域网会话互传行程。"
+    >
+      <n-button type="primary" @click="openCreate">
+        <template #icon><Plus :size="15" /></template>
+        新建旅行
+      </n-button>
+      <n-button @click="pickFile">导入 .trip</n-button>
+      <n-button quaternary @click="router.push('/settings')">如何多设备同步？</n-button>
+    </UiEmptyState>
+
+    <template v-else>
+      <!-- 统计行 -->
+      <div class="stats-row">
+        <UiStatCard :icon="Compass" label="全部旅行" :value="`${totalCount} 个`" />
+        <UiStatCard :icon="CalendarDays" label="进行中" :value="`${ongoingCount} 个`" />
+        <UiStatCard :icon="Wallet" label="累计花费" :value="`¥${totalSpentYuan}`" />
       </div>
-      <input ref="fileInput" type="file" accept=".trip,.json" style="display: none" @change="onFilePicked" />
-    </div>
 
-    <n-empty v-if="isEmpty" description="还没有旅行计划，点右上角新建一个吧" class="empty">
-      <template #extra>
-        <n-button type="primary" @click="openCreate">新建旅行</n-button>
-      </template>
-    </n-empty>
-
-    <div class="trip-grid">
-      <n-card v-for="trip in tripsStore.trips" :key="trip.id" class="trip-card" hoverable>
-        <template #header>
-          <span class="trip-name" @click="router.push(`/trip/${trip.id}`)">{{ trip.name }}</span>
-        </template>
-        <template #header-extra>
-          <span class="dest-type">{{ destTypeLabel[trip.destType] }}</span>
-        </template>
-        <div class="trip-meta">
-          <div>{{ trip.startDate }} ~ {{ trip.endDate }}（{{ daysOf(trip) }} 天）</div>
-          <div v-if="trip.destCity" class="muted">📍 {{ trip.destCity }}</div>
-          <div v-if="trip.totalBudgetFen > 0" class="budget-line">
-            <span>预算 ¥{{ fenToYuan(trip.totalBudgetFen) }}</span>
-            <span class="muted">已用 ¥{{ fenToYuan(usedFen(trip)) }}</span>
+      <div class="trip-grid">
+        <n-card v-for="trip in tripsStore.trips" :key="trip.id" class="trip-card" hoverable>
+          <div class="trip-card-head" @click="router.push(`/trip/${trip.id}`)">
+            <span class="dest-icon" :data-type="trip.destType">
+              <component :is="destTypeIcon[trip.destType]" :size="17" :stroke-width="2" />
+            </span>
+            <span class="trip-name">{{ trip.name }}</span>
+            <UiStatusBadge :start-date="trip.startDate" :end-date="trip.endDate" />
           </div>
-          <div v-if="trip.totalBudgetFen > 0" class="budget-bar">
-            <div class="budget-bar-inner" :style="{ width: budgetPct(trip) + '%' }" />
+          <div class="trip-meta">
+            <div class="meta-line">{{ humanDate(trip) }} · {{ daysOf(trip) }} 天<span v-if="trip.destCity" class="meta-city"><MapPin :size="12" :stroke-width="2" />{{ trip.destCity }}</span></div>
+            <div v-if="trip.totalBudgetFen > 0" class="budget-line tnum">
+              <span>¥{{ fenToYuan(usedFen(trip)) }}</span>
+              <span class="muted">/ ¥{{ fenToYuan(trip.totalBudgetFen) }}</span>
+              <span class="budget-pct" :class="{ over: budgetPct(trip) >= 100 }">{{ budgetPct(trip) }}%</span>
+            </div>
+            <div v-if="trip.totalBudgetFen > 0" class="budget-bar">
+              <div class="budget-bar-inner" :class="{ over: budgetPct(trip) >= 100 }" :style="{ width: budgetPct(trip) + '%' }" />
+            </div>
           </div>
-        </div>
-        <template #action>
-          <div class="card-actions">
-            <n-button size="small" quaternary @click="router.push(`/trip/${trip.id}`)">打开</n-button>
-            <n-button size="small" quaternary @click="doExport(trip)">导出</n-button>
-            <n-button size="small" quaternary @click="copyTrip(trip.id)">复制</n-button>
-            <n-popconfirm @positive-click="removeTrip(trip.id)">
-              <template #trigger>
-                <n-button size="small" quaternary type="error">删除</n-button>
-              </template>
-              确定删除「{{ trip.name }}」？此操作不可恢复。
-            </n-popconfirm>
-          </div>
-        </template>
-      </n-card>
-    </div>
+          <template #action>
+            <div class="card-actions">
+              <n-button size="small" quaternary @click="router.push(`/trip/${trip.id}`)">打开</n-button>
+              <n-button size="small" quaternary @click="doExport(trip)">
+                <template #icon><Download :size="14" /></template>
+                导出
+              </n-button>
+              <n-button size="small" quaternary @click="copyTrip(trip.id)">
+                <template #icon><Copy :size="14" /></template>
+                复制
+              </n-button>
+              <n-popconfirm @positive-click="removeTrip(trip.id)">
+                <template #trigger>
+                  <n-button size="small" quaternary type="error">
+                    <template #icon><Trash2 :size="14" /></template>
+                    删除
+                  </n-button>
+                </template>
+                确定删除「{{ trip.name }}」？此操作不可恢复。
+              </n-popconfirm>
+            </div>
+          </template>
+        </n-card>
+      </div>
+    </template>
 
     <!-- 新建旅行 -->
     <n-modal v-model:show="showCreate" preset="card" title="新建旅行" style="width: min(420px, calc(100vw - 32px))">
@@ -304,110 +355,150 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.page {
-  padding: 24px;
-  max-width: 1000px;
-  margin: 0 auto;
-}
-
-.page-header {
+.stats-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
   flex-wrap: wrap;
-  gap: 12px;
-  margin-bottom: 20px;
-}
-
-.page-header h1 {
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-
-.header-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.empty {
-  margin-top: 120px;
 }
 
 .trip-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
+  gap: var(--space-4);
+}
+
+.trip-card {
+  transition: transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+
+/* hover 上浮 */
+.trip-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+
+.trip-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  min-width: 0;
+}
+
+.dest-icon {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 目的地类型的图标配色（与令牌对应） */
+.dest-icon[data-type='city'] {
+  background: var(--type-transport-soft);
+  color: var(--type-transport);
+}
+
+.dest-icon[data-type='beach'] {
+  background: var(--type-play-soft);
+  color: var(--type-play);
+}
+
+.dest-icon[data-type='mountain'] {
+  background: var(--type-stay-soft);
+  color: var(--type-stay);
+}
+
+.dest-icon[data-type='generic'] {
+  background: var(--type-other-soft);
+  color: var(--type-other);
 }
 
 .trip-name {
-  cursor: pointer;
+  font-weight: 600;
+  font-size: var(--text-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
 }
 
-.trip-name:hover {
-  color: var(--app-accent);
-}
-
-.dest-type {
-  font-size: 12px;
-  color: var(--app-muted);
-  background: var(--app-chip-bg);
-  padding: 2px 8px;
-  border-radius: 10px;
+.trip-card-head .ui-status-badge {
+  flex-shrink: 0;
 }
 
 .trip-meta {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
-.muted {
-  color: var(--app-muted-soft);
+.meta-line {
+  color: var(--app-muted);
+}
+
+.meta-city {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 8px;
 }
 
 .budget-line {
   display: flex;
-  justify-content: space-between;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.budget-pct {
+  margin-left: auto;
+  color: var(--app-accent);
+  font-weight: 600;
+  font-size: var(--text-xs);
+}
+
+.budget-pct.over {
+  color: var(--app-danger);
 }
 
 .budget-bar {
   height: 6px;
-  background: var(--app-border);
+  background: var(--app-chip-bg);
   border-radius: 3px;
   overflow: hidden;
 }
 
 .budget-bar-inner {
   height: 100%;
-  background: var(--app-primary);
+  background: var(--app-accent-solid);
   border-radius: 3px;
+  transition: width var(--dur-normal) var(--ease);
+}
+
+.budget-bar-inner.over {
+  background: var(--app-danger);
 }
 
 .card-actions {
   display: flex;
-  gap: 4px;
+  gap: var(--space-1);
+  justify-content: flex-end;
 }
 
 .modal-footer {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
+  gap: var(--space-2);
 }
 
 @media (max-width: 720px) {
   .page {
-    padding: 16px;
-  }
-
-  .page-header {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .empty {
-    margin-top: 60px;
+    padding: var(--space-4);
   }
 
   .trip-grid {

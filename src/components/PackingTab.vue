@@ -4,6 +4,7 @@ import {
   NButton, NModal, NInput, NCheckbox,
   NProgress, NEmpty, NDropdown, NPopconfirm, useMessage,
 } from 'naive-ui'
+import { MoreHorizontal, X, Package, ListPlus } from '@lucide/vue'
 import type { Trip, PackingGroup } from '../schema/trip'
 import { nanoid } from 'nanoid'
 import { useTripsStore } from '../stores/trips'
@@ -137,11 +138,14 @@ async function onGroupAction(key: string, gi: number) {
           :show-indicator="false"
           :height="10"
           :border-radius="5"
-          color="#16a34a"
+          color="var(--app-success)"
         />
-        <span class="progress-text">{{ packedItems }}/{{ totalItems }} 已打包（{{ packedPct }}%）</span>
+        <span class="progress-text tnum">{{ packedItems }}/{{ totalItems }} 已打包（{{ packedPct }}%）</span>
       </div>
-      <n-button size="small" type="primary" @click="showTemplates = true">套用模板</n-button>
+      <n-button size="small" type="primary" @click="showTemplates = true">
+        <template #icon><Package :size="14" /></template>
+        套用模板
+      </n-button>
     </div>
 
     <n-empty v-if="trip.packing.length === 0" description="行李清单是空的，套个模板快速开始" class="empty">
@@ -154,9 +158,11 @@ async function onGroupAction(key: string, gi: number) {
       <div v-for="(g, gi) in trip.packing" :key="g.group" class="group-card">
         <div class="group-header">
           <strong>{{ g.group }}</strong>
-          <span class="muted small">{{ g.items.filter((i) => i.packed).length }}/{{ g.items.length }}</span>
+          <span class="muted small tnum">{{ g.items.filter((i) => i.packed).length }}/{{ g.items.length }}</span>
           <n-dropdown trigger="click" :options="groupActions" @select="(key: string) => onGroupAction(key, gi)">
-            <n-button size="tiny" quaternary>⋯</n-button>
+            <n-button size="tiny" quaternary>
+              <template #icon><MoreHorizontal :size="15" /></template>
+            </n-button>
           </n-dropdown>
         </div>
         <div class="group-items">
@@ -166,7 +172,9 @@ async function onGroupAction(key: string, gi: number) {
             </n-checkbox>
             <n-popconfirm @positive-click="removeItem(gi, ii)">
               <template #trigger>
-                <n-button size="tiny" quaternary type="error">×</n-button>
+                <n-button size="tiny" quaternary type="error">
+                  <template #icon><X :size="13" /></template>
+                </n-button>
               </template>
               删除「{{ item.label }}」？
             </n-popconfirm>
@@ -177,7 +185,8 @@ async function onGroupAction(key: string, gi: number) {
           </div>
         </div>
         <n-button v-if="addingItemGroup !== gi" size="tiny" quaternary @click="addingItemGroup = gi; newItemLabel = ''">
-          + 加东西
+          <template #icon><ListPlus :size="14" /></template>
+          加东西
         </n-button>
       </div>
     </div>
@@ -246,8 +255,9 @@ async function onGroupAction(key: string, gi: number) {
 
 .group-card {
   border: 1px solid var(--app-border);
-  border-radius: 10px;
-  padding: 12px;
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  background: var(--app-card-bg);
 }
 
 .group-header {

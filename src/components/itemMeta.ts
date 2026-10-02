@@ -1,4 +1,4 @@
-/** 行程条目类型的展示元信息 */
+/** 条目类型 / 花费分类的文案元信息（图标统一在 icons.ts） */
 
 export const itemLabel: Record<string, string> = {
   transport: '交通',
@@ -6,14 +6,6 @@ export const itemLabel: Record<string, string> = {
   food: '餐饮',
   play: '游玩',
   other: '其他',
-}
-
-export const typeIcon: Record<string, string> = {
-  transport: '🚄',
-  stay: '🏨',
-  food: '🍜',
-  play: '🎡',
-  other: '📌',
 }
 
 export const itemTypeOptions = [

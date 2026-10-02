@@ -8,7 +8,7 @@ import {
 import { useTripsStore } from '../stores/trips'
 import { loadAiConfigWithKey, checkAiReachable } from '../utils/aiConfig'
 import { generateDraft, AiError, draftToTrip, type AiDraft } from '../utils/aiDraft'
-import { typeIcon } from './itemMeta'
+import { typeIcon } from './icons'
 import type { TripDay } from '../schema/trip'
 
 const props = defineProps<{ show: boolean }>()
@@ -168,8 +168,10 @@ function toDateStr(d: Date): string {
       <div v-for="day in daysOfDraft()" :key="day.date" class="preview-day">
         <div class="preview-date">{{ day.date }}</div>
         <div v-for="item in day.items" :key="item.title + item.time" class="preview-item">
-          <span>{{ typeIcon[item.type] }}</span>
-          <span class="preview-time">{{ item.time ?? '--:--' }}</span>
+          <span class="preview-type" :data-type="item.type">
+            <component :is="typeIcon[item.type]" :size="13" :stroke-width="2" />
+          </span>
+          <span class="preview-time tnum">{{ item.time ?? '--:--' }}</span>
           <span class="preview-title">{{ item.title }}</span>
           <span v-if="item.note" class="preview-note">{{ item.note }}</span>
         </div>
@@ -247,7 +249,42 @@ function toDateStr(d: Date): string {
   gap: 8px;
   font-size: 13px;
   padding: 2px 0;
-  align-items: baseline;
+  align-items: center;
+}
+
+.preview-type {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.preview-type[data-type='transport'] {
+  background: var(--type-transport-soft);
+  color: var(--type-transport);
+}
+
+.preview-type[data-type='stay'] {
+  background: var(--type-stay-soft);
+  color: var(--type-stay);
+}
+
+.preview-type[data-type='food'] {
+  background: var(--type-food-soft);
+  color: var(--type-food);
+}
+
+.preview-type[data-type='play'] {
+  background: var(--type-play-soft);
+  color: var(--type-play);
+}
+
+.preview-type[data-type='other'] {
+  background: var(--type-other-soft);
+  color: var(--type-other);
 }
 
 .preview-time {

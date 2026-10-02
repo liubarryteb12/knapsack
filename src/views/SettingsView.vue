@@ -5,6 +5,7 @@ import { useTripsStore } from '../stores/trips'
 import type { Trip } from '../schema/trip'
 import { loadAiConfigWithKey, saveAiConfig, testAiConnection, fetchModelList, type AiConfig } from '../utils/aiConfig'
 import { useThemeStore, type ThemeMode } from '../stores/theme'
+import UiPageHeader from '../components/ui/UiPageHeader.vue'
 
 const tripsStore = useTripsStore()
 const themeStore = useThemeStore()
@@ -27,6 +28,7 @@ function toggleModule(trip: Trip, key: 'expenses' | 'notes', value: boolean) {
 const ai = ref<AiConfig>({ baseURL: '', apiKey: '', model: '' })
 const testing = ref(false)
 const testResult = ref('')
+const testOk = ref(false)
 const message = useMessage()
 
 /** 内置候选模型；从接口拉到真实列表后会与之合并 */
@@ -85,6 +87,7 @@ async function runTest() {
   const result = await testAiConnection(ai.value)
   testing.value = false
   testResult.value = result.message
+  testOk.value = result.ok
 }
 
 const hasTrips = computed(() => tripsStore.trips.length > 0)
@@ -92,7 +95,7 @@ const hasTrips = computed(() => tripsStore.trips.length > 0)
 
 <template>
   <div class="page">
-    <h1>设置</h1>
+    <UiPageHeader title="设置" subtitle="主题、模块与 AI 接口都只保存在本机" />
 
     <n-card size="small" class="section" title="外观">
       <div class="appearance-row">
@@ -101,7 +104,6 @@ const hasTrips = computed(() => tripsStore.trips.length > 0)
           <n-radio-button value="dark">深色</n-radio-button>
           <n-radio-button value="system">跟随系统</n-radio-button>
         </n-radio-group>
-        <p class="muted small">设置只保存在本机。</p>
       </div>
     </n-card>
 
@@ -120,9 +122,15 @@ const hasTrips = computed(() => tripsStore.trips.length > 0)
       </div>
     </n-card>
 
-    <n-card size="small" class="section" title="AI 接口配置">
+    <n-card size="small" class="section">
+      <template #header>
+        <div class="card-head-with-status">
+          AI 接口配置
+          <span v-if="testOk" class="status-dot ok" title="连接正常" />
+        </div>
+      </template>
       <p class="muted small">
-        仅支持 OpenAI 兼容接口（如 DeepSeek）。配置只保存在本机浏览器存储，不上传任何服务器。
+        仅支持 OpenAI 兼容接口（如 DeepSeek）。配置加密保存在本机，不上传任何服务器。
       </p>
       <n-form label-placement="left" label-width="90">
         <n-form-item label="Base URL">
@@ -153,7 +161,7 @@ const hasTrips = computed(() => tripsStore.trips.length > 0)
       </n-form>
       <div class="test-row">
         <n-button size="small" :loading="testing" @click="runTest">测试连接</n-button>
-        <span v-if="testResult" class="test-result">{{ testResult }}</span>
+        <span v-if="testResult" class="test-result" :class="{ ok: testOk }">{{ testResult }}</span>
       </div>
     </n-card>
 
@@ -166,52 +174,61 @@ const hasTrips = computed(() => tripsStore.trips.length > 0)
 </template>
 
 <style scoped>
-.page {
-  padding: 24px;
-  max-width: 640px;
-  margin: 0 auto;
-}
-
-@media (max-width: 720px) {
-  .page {
-    padding: 16px;
-  }
-}
-
 .section {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-4);
+}
+
+.card-head-with-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.status-dot.ok {
+  background: var(--app-success);
+  box-shadow: 0 0 0 3px var(--app-success-soft);
 }
 
 .module-row {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: var(--space-5);
   padding: 6px 0;
 }
 
 .trip-name {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .switch-label {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--app-muted);
 }
 
 .appearance-row {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: var(--space-4);
   flex-wrap: wrap;
 }
 
 .model-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   width: 100%;
 }
 
@@ -220,18 +237,18 @@ const hasTrips = computed(() => tripsStore.trips.length > 0)
   min-width: 0;
 }
 
-.appearance-row .small {
-  margin-bottom: 0;
-}
-
 .test-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .test-result {
-  font-size: 13px;
+  font-size: var(--text-sm);
+  color: var(--app-danger);
+}
+
+.test-result.ok {
   color: var(--app-success);
 }
 
@@ -240,7 +257,7 @@ const hasTrips = computed(() => tripsStore.trips.length > 0)
 }
 
 .small {
-  font-size: 12px;
+  font-size: var(--text-xs);
   margin-bottom: 10px;
 }
 </style>

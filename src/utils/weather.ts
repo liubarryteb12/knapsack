@@ -2,9 +2,10 @@
 
 export interface DayWeather {
   date: string
+  /** WMO 天气代码（UI 据此选图标） */
+  code: number
   /** 天气代码 → 中文描述 */
   desc: string
-  icon: string
   tempMaxC: number
   tempMinC: number
   precipProbPct: number
@@ -15,32 +16,32 @@ interface GeoResult {
   longitude: number
 }
 
-const WMO_MAP: Record<number, { desc: string; icon: string }> = {
-  0: { desc: '晴', icon: '☀️' },
-  1: { desc: '大致晴', icon: '🌤️' },
-  2: { desc: '多云', icon: '⛅' },
-  3: { desc: '阴', icon: '☁️' },
-  45: { desc: '雾', icon: '🌫️' },
-  48: { desc: '雾凇', icon: '🌫️' },
-  51: { desc: '毛毛雨', icon: '🌦️' },
-  53: { desc: '毛毛雨', icon: '🌦️' },
-  55: { desc: '毛毛雨', icon: '🌦️' },
-  61: { desc: '小雨', icon: '🌧️' },
-  63: { desc: '中雨', icon: '🌧️' },
-  65: { desc: '大雨', icon: '🌧️' },
-  71: { desc: '小雪', icon: '🌨️' },
-  73: { desc: '中雪', icon: '🌨️' },
-  75: { desc: '大雪', icon: '❄️' },
-  80: { desc: '阵雨', icon: '🌦️' },
-  81: { desc: '阵雨', icon: '🌦️' },
-  82: { desc: '强阵雨', icon: '⛈️' },
-  95: { desc: '雷雨', icon: '⛈️' },
-  96: { desc: '雷雨伴冰雹', icon: '⛈️' },
-  99: { desc: '雷雨伴冰雹', icon: '⛈️' },
+const WMO_MAP: Record<number, { desc: string }> = {
+  0: { desc: '晴' },
+  1: { desc: '大致晴' },
+  2: { desc: '多云' },
+  3: { desc: '阴' },
+  45: { desc: '雾' },
+  48: { desc: '雾凇' },
+  51: { desc: '毛毛雨' },
+  53: { desc: '毛毛雨' },
+  55: { desc: '毛毛雨' },
+  61: { desc: '小雨' },
+  63: { desc: '中雨' },
+  65: { desc: '大雨' },
+  71: { desc: '小雪' },
+  73: { desc: '中雪' },
+  75: { desc: '大雪' },
+  80: { desc: '阵雨' },
+  81: { desc: '阵雨' },
+  82: { desc: '强阵雨' },
+  95: { desc: '雷雨' },
+  96: { desc: '雷雨伴冰雹' },
+  99: { desc: '雷雨伴冰雹' },
 }
 
-function wmo(code: number): { desc: string; icon: string } {
-  return WMO_MAP[code] ?? { desc: '未知', icon: '❓' }
+function wmoDesc(code: number): string {
+  return WMO_MAP[code]?.desc ?? '未知'
 }
 
 /** 地理编码：城市名 → 坐标 */
@@ -87,10 +88,10 @@ export async function fetchWeather(
       const tMax = daily.temperature_2m_max[i]
       const tMin = daily.temperature_2m_min[i]
       if (date === undefined || code === undefined || tMax === undefined || tMin === undefined) continue
-      const info = wmo(code)
       out.set(date, {
         date,
-        ...info,
+        code,
+        desc: wmoDesc(code),
         tempMaxC: Math.round(tMax),
         tempMinC: Math.round(tMin),
         precipProbPct: daily.precipitation_probability_max[i] ?? 0,

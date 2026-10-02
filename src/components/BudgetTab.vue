@@ -2,12 +2,14 @@
 import { computed, ref } from 'vue'
 import { NButton, NModal, NForm, NFormItem, NInput, NSelect, NDatePicker,
   NCheckboxGroup, NCheckbox, NInputNumber, NCard, NProgress, NEmpty, NDropdown, useMessage } from 'naive-ui'
+import { MoreHorizontal, X } from '@lucide/vue'
 import type { Trip, Expense, ExpenseCategory, Member } from '../schema/trip'
 import { nanoid } from 'nanoid'
 import { useTripsStore } from '../stores/trips'
 import { fenToYuan, yuanToFen, formatFen } from '../utils/money'
 import { settleExpenses, memberName } from '../utils/settle'
 import { expenseCategoryOptions, expenseCategoryLabel } from './itemMeta'
+import { typeIcon } from './icons'
 import { readTripFileInput, TripImportError } from '../utils/tripFile'
 import { expenseSchema } from '../schema/trip'
 import { todayStr, fromDateStr, toDateStr } from '../utils/date'
@@ -407,7 +409,7 @@ async function onExpenseAction(key: string, e: Expense) {
           :show-indicator="false"
           :height="10"
           :border-radius="5"
-          :color="usedPct > 100 ? '#ef4444' : '#6366f1'"
+          :color="usedPct > 100 ? 'var(--app-danger)' : 'var(--app-accent-solid)'"
         />
       </div>
     </n-card>
@@ -423,6 +425,9 @@ async function onExpenseAction(key: string, e: Expense) {
         size="small"
       />
       <div v-for="row in catRows" :key="row.category" class="cat-row">
+        <span class="cat-icon" :data-type="row.category">
+          <component :is="typeIcon[row.category]" :size="14" :stroke-width="2" />
+        </span>
         <span class="cat-label">{{ row.label }}</span>
         <n-progress
           type="line"
@@ -430,10 +435,10 @@ async function onExpenseAction(key: string, e: Expense) {
           :show-indicator="false"
           :height="8"
           :border-radius="4"
-          :color="row.over ? '#ef4444' : '#6366f1'"
+          :color="row.over ? 'var(--app-danger)' : 'var(--app-accent-solid)'"
           class="cat-bar"
         />
-        <span class="cat-fen" :class="{ over: row.over }">
+        <span class="cat-fen tnum" :class="{ over: row.over }">
           {{ formatFen(row.usedFen) }}<template v-if="row.budgetFen > 0"> / {{ formatFen(row.budgetFen) }}</template>
           <span v-if="row.budgetFen > 0" class="cat-pct">{{ row.pct }}%</span>
         </span>
@@ -445,7 +450,9 @@ async function onExpenseAction(key: string, e: Expense) {
       <div class="member-row">
         <span v-for="m in trip.members" :key="m.id" class="member-chip">
           {{ m.name }}
-          <button v-if="m.role !== 'owner'" class="member-x" @click="removeMember(m.id)">×</button>
+          <button v-if="m.role !== 'owner'" class="member-x" @click="removeMember(m.id)">
+            <X :size="12" :stroke-width="2.4" />
+          </button>
         </span>
         <n-button size="tiny" @click="showMembers = true">管理</n-button>
       </div>
@@ -463,13 +470,18 @@ async function onExpenseAction(key: string, e: Expense) {
 
       <n-empty v-if="trip.expenses.length === 0" description="暂无花费记录" size="small" />
       <div v-for="e in trip.expenses" :key="e.id" class="expense-row">
-        <span class="e-date">{{ e.date.slice(5) }}</span>
-        <span class="e-cat">{{ expenseCategoryLabel[e.category] }}</span>
+        <span class="e-date tnum">{{ e.date.slice(5) }}</span>
+        <span class="e-cat" :data-type="e.category">
+          <component :is="typeIcon[e.category]" :size="12" :stroke-width="2" />
+          {{ expenseCategoryLabel[e.category] }}
+        </span>
         <span class="e-title">{{ e.title }}</span>
-        <span class="e-amount">{{ formatFen(e.amountFen) }}</span>
+        <span class="e-amount tnum">{{ formatFen(e.amountFen) }}</span>
         <span class="e-payer">{{ memberName(trip.members, e.payerId) }} 付</span>
         <n-dropdown trigger="click" :options="expenseActions" @select="(key: string) => onExpenseAction(key, e)">
-          <n-button size="tiny" quaternary>⋯</n-button>
+          <n-button size="tiny" quaternary>
+            <template #icon><MoreHorizontal :size="15" /></template>
+          </n-button>
         </n-dropdown>
       </div>
     </n-card>
@@ -647,9 +659,44 @@ async function onExpenseAction(key: string, e: Expense) {
   margin-bottom: 6px;
 }
 
+.cat-icon {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cat-icon[data-type='transport'] {
+  background: var(--type-transport-soft);
+  color: var(--type-transport);
+}
+
+.cat-icon[data-type='stay'] {
+  background: var(--type-stay-soft);
+  color: var(--type-stay);
+}
+
+.cat-icon[data-type='food'] {
+  background: var(--type-food-soft);
+  color: var(--type-food);
+}
+
+.cat-icon[data-type='play'] {
+  background: var(--type-play-soft);
+  color: var(--type-play);
+}
+
+.cat-icon[data-type='other'] {
+  background: var(--type-other-soft);
+  color: var(--type-other);
+}
+
 .cat-label {
   width: 40px;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .cat-bar {
@@ -722,11 +769,37 @@ async function onExpenseAction(key: string, e: Expense) {
 }
 
 .e-cat {
-  background: var(--app-chip-bg);
-  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: var(--radius-full);
   padding: 1px 8px;
-  font-size: 12px;
-  color: var(--app-muted);
+  font-size: var(--text-xs);
+}
+
+.e-cat[data-type='transport'] {
+  background: var(--type-transport-soft);
+  color: var(--type-transport);
+}
+
+.e-cat[data-type='stay'] {
+  background: var(--type-stay-soft);
+  color: var(--type-stay);
+}
+
+.e-cat[data-type='food'] {
+  background: var(--type-food-soft);
+  color: var(--type-food);
+}
+
+.e-cat[data-type='play'] {
+  background: var(--type-play-soft);
+  color: var(--type-play);
+}
+
+.e-cat[data-type='other'] {
+  background: var(--type-other-soft);
+  color: var(--type-other);
 }
 
 .e-title {

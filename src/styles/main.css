@@ -1,9 +1,44 @@
 /* 全局基础样式与主题变量 */
 
 :root {
+  /* ===== 设计令牌 ===== */
+
+  /* 间距 scale（4px 基准） */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* 圆角 scale */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-full: 999px;
+
+  /* 字号 scale */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 26px;
+
+  /* 动效 */
+  --dur-fast: 0.15s;
+  --dur-normal: 0.2s;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ===== 颜色令牌（亮色） ===== */
+
   /* 表面与描边 */
-  --app-bg: #ffffff;
-  --app-bg-soft: #fafafa;
+  --app-bg: #f7f8fa;
+  --app-bg-soft: #ffffff;
   --app-border: #e5e7eb;
   --app-border-soft: #f3f4f6;
   /* 文字 */
@@ -15,10 +50,10 @@
   /* 交互态与色块 */
   --app-chip-bg: #f3f4f6;
   --app-hover-bg: #eceef1;
-  --app-primary: #6366f1;
+  --app-primary: #4f46e5;
   /* 强调色（靛蓝） */
   --app-accent: #4338ca;
-  --app-accent-solid: #4338ca;
+  --app-accent-solid: #4f46e5;
   --app-accent-on: #ffffff;
   --app-accent-soft: #e0e7ff;
   --app-accent-tint: #eef2ff;
@@ -27,17 +62,40 @@
   --app-accent-light: #818cf8;
   /* 语义色 */
   --app-success: #16a34a;
-  --app-danger: #ef4444;
+  --app-success-soft: #dcfce7;
+  --app-warning: #d97706;
+  --app-warning-soft: #fef3c7;
+  --app-danger: #dc2626;
+  --app-danger-soft: #fee2e2;
+  /* 阴影 */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.07);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.1);
+  /* 侧边栏 / 底部导航 */
+  --app-nav-bg: #ffffff;
+  /* 卡片 */
+  --app-card-bg: #ffffff;
   /* 天气条 */
   --app-weather-border: #e0f2fe;
   --app-weather-bg: #f0f9ff;
   --app-weather-text: #64748b;
   --app-weather-accent: #38bdf8;
+  /* 条目类型色（时间轴节点 / 分类徽章共用） */
+  --type-transport: #0ea5e9;
+  --type-transport-soft: #e0f2fe;
+  --type-stay: #8b5cf6;
+  --type-stay-soft: #ede9fe;
+  --type-food: #f59e0b;
+  --type-food-soft: #fef3c7;
+  --type-play: #ec4899;
+  --type-play-soft: #fce7f3;
+  --type-other: #64748b;
+  --type-other-soft: #f1f5f9;
 }
 
 [data-theme='dark'] {
-  --app-bg: #18181c;
-  --app-bg-soft: #202024;
+  --app-bg: #131318;
+  --app-bg-soft: #1c1c22;
   --app-border: #303038;
   --app-border-soft: #2a2a30;
   --app-text: #e6e7ea;
@@ -57,11 +115,30 @@
   --app-accent-surface: #1e1e2b;
   --app-accent-light: #818cf8;
   --app-success: #4ade80;
+  --app-success-soft: #14321f;
+  --app-warning: #fbbf24;
+  --app-warning-soft: #3a2b0d;
   --app-danger: #f87171;
+  --app-danger-soft: #3a1a1a;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --app-nav-bg: #17171d;
+  --app-card-bg: #1c1c22;
   --app-weather-border: #1e3a5f;
   --app-weather-bg: #14263a;
   --app-weather-text: #94a3b8;
   --app-weather-accent: #38bdf8;
+  --type-transport: #38bdf8;
+  --type-transport-soft: #0c2a3d;
+  --type-stay: #a78bfa;
+  --type-stay-soft: #2a2440;
+  --type-food: #fbbf24;
+  --type-food-soft: #3a2b0d;
+  --type-play: #f472b6;
+  --type-play-soft: #3d1f2e;
+  --type-other: #94a3b8;
+  --type-other-soft: #27303d;
 }
 
 * {
@@ -85,5 +162,37 @@ body,
 }
 
 body {
-  transition: background-color 0.2s, color 0.2s;
+  transition: background-color var(--dur-normal) var(--ease), color var(--dur-normal) var(--ease);
+}
+
+/* ===== 全局工具类（页面级 .page/.section 统一从这里来） ===== */
+
+.page {
+  padding: var(--space-6);
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.muted {
+  color: var(--app-muted-soft);
+}
+
+.small {
+  font-size: var(--text-xs);
+}
+
+/* 数字对齐（金额、时间） */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 用户偏好减少动效：全局关掉过渡与动画 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }

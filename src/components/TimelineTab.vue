@@ -4,12 +4,14 @@ import {
   NButton, NModal, NForm, NFormItem, NInput, NSelect, NTimePicker,
   NCheckbox, NDropdown, NEmpty,
 } from 'naive-ui'
+import { Undo2, Redo2, Plus, MoreHorizontal, GripVertical } from '@lucide/vue'
 import type { Trip, TripItem, ItemType } from '../schema/trip'
 import { nanoid } from 'nanoid'
 import Sortable from 'sortablejs'
 import { useTripsStore } from '../stores/trips'
 import { useHistoryStore } from '../stores/history'
-import { itemTypeOptions, typeIcon } from './itemMeta'
+import { itemTypeOptions } from './itemMeta'
+import { typeIcon } from './icons'
 
 const props = defineProps<{ trip: Trip }>()
 const tripsStore = useTripsStore()
@@ -26,13 +28,6 @@ watch(
 
 /** 当前激活天 */
 const currentDay = computed(() => props.trip.days[activeDay.value])
-
-const dayTabOptions = computed(() =>
-  props.trip.days.map((d, i) => ({
-    label: `D${i + 1} ${d.date.slice(5)}`,
-    value: i,
-  })),
-)
 
 // ---- 条目编辑 ----
 const showEdit = ref(false)
@@ -216,11 +211,34 @@ async function onRowAction(key: string, index: number) {
 <template>
   <div class="timeline-wrap">
     <div class="toolbar">
-      <n-select v-model:value="activeDay" :options="dayTabOptions" class="day-select" />
+      <!-- 天切换：横向日期 chips，滚动容器；天数多时也可横向滑 -->
+      <div class="day-chips" role="tablist">
+        <button
+          v-for="(d, i) in trip.days"
+          :key="d.date"
+          class="day-chip"
+          :class="{ active: i === activeDay }"
+          role="tab"
+          :aria-selected="i === activeDay"
+          @click="activeDay = i"
+        >
+          <span class="day-chip-label">D{{ i + 1 }}</span>
+          <span class="day-chip-date">{{ d.date.slice(5) }}</span>
+        </button>
+      </div>
       <div class="toolbar-right">
-        <n-button size="small" :disabled="!canUndo" @click="undo">↩ 撤销</n-button>
-        <n-button size="small" :disabled="!canRedo" @click="redo">↪ 重做</n-button>
-        <n-button size="small" type="primary" @click="openCreate">+ 添加条目</n-button>
+        <n-button size="small" :disabled="!canUndo" @click="undo">
+          <template #icon><Undo2 :size="14" /></template>
+          撤销
+        </n-button>
+        <n-button size="small" :disabled="!canRedo" @click="redo">
+          <template #icon><Redo2 :size="14" /></template>
+          重做
+        </n-button>
+        <n-button size="small" type="primary" @click="openCreate">
+          <template #icon><Plus :size="14" /></template>
+          添加条目
+        </n-button>
       </div>
     </div>
 
@@ -241,10 +259,12 @@ async function onRowAction(key: string, index: number) {
         </div>
         <div class="day-items" :data-day="di">
           <div v-for="(item, ii) in day.items" :key="item.id" :data-id="item.id" class="item-row" :class="{ done: item.done }">
-            <span class="item-drag-handle" title="拖拽排序">⋮⋮</span>
+            <span class="item-drag-handle" title="拖拽排序"><GripVertical :size="14" :stroke-width="2" /></span>
             <n-checkbox :checked="item.done" @click.stop="toggleDone(item)" />
-            <span class="item-icon">{{ typeIcon[item.type] }}</span>
-            <span class="item-time">{{ item.time ?? '--:--' }}</span>
+            <span class="item-icon" :data-type="item.type">
+              <component :is="typeIcon[item.type]" :size="15" :stroke-width="2" />
+            </span>
+            <span class="item-time tnum">{{ item.time ?? '--:--' }}</span>
             <span class="item-title">{{ item.title }}</span>
             <span v-if="item.note" class="item-note">{{ item.note }}</span>
             <n-dropdown
@@ -252,7 +272,9 @@ async function onRowAction(key: string, index: number) {
               :options="rowActions"
               @select="(key: string) => onRowAction(key, ii)"
             >
-              <n-button size="tiny" quaternary class="item-menu">⋯</n-button>
+              <n-button size="tiny" quaternary class="item-menu">
+                <template #icon><MoreHorizontal :size="15" /></template>
+              </n-button>
             </n-dropdown>
           </div>
           <p v-if="day.items.length === 0" class="empty-day">暂无安排，从其他天拖入或点上方添加</p>
@@ -295,24 +317,72 @@ async function onRowAction(key: string, index: number) {
 
 <style scoped>
 .timeline-wrap {
-  padding-top: 12px;
+  padding-top: var(--space-3);
 }
 
 .toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
 }
 
-.day-select {
-  width: 180px;
+/* 天切换 chips：横向滚动，触屏友好 */
+.day-chips {
+  display: flex;
+  gap: var(--space-1);
+  overflow-x: auto;
+  flex: 1;
+  min-width: 0;
+  padding: 2px;
+  scrollbar-width: none;
+}
+
+.day-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.day-chip {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 5px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+  font: inherit;
+}
+
+.day-chip:hover {
+  background: var(--app-hover-bg);
+}
+
+.day-chip.active {
+  background: var(--app-accent-solid);
+  border-color: var(--app-accent-solid);
+  color: var(--app-accent-on);
+}
+
+.day-chip-label {
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+
+.day-chip-date {
+  font-size: 11px;
+  opacity: 0.85;
+  font-variant-numeric: tabular-nums;
 }
 
 .toolbar-right {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
+  flex-shrink: 0;
 }
 
 .empty {
@@ -322,15 +392,15 @@ async function onRowAction(key: string, index: number) {
 .timeline {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .day-block {
   border: 1px solid var(--app-border);
-  border-radius: 10px;
-  padding: 12px;
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
   opacity: 0.55;
-  transition: opacity 0.15s;
+  transition: opacity var(--dur-fast) var(--ease);
 }
 
 .day-block.active {
@@ -342,45 +412,51 @@ async function onRowAction(key: string, index: number) {
 .day-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
 }
 
 .day-badge {
   background: var(--app-accent-solid);
   color: var(--app-accent-on);
-  font-size: 12px;
-  border-radius: 6px;
+  font-size: var(--text-xs);
+  border-radius: var(--radius-sm);
   padding: 1px 7px;
   font-weight: 600;
 }
 
 .day-date {
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .day-count {
   color: var(--app-muted-soft);
-  font-size: 12px;
+  font-size: var(--text-xs);
   margin-left: auto;
 }
 
 .day-items {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
   min-height: 40px;
 }
 
 .item-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  background: var(--app-bg);
+  gap: var(--space-2);
+  background: var(--app-card-bg);
   border: 1px solid var(--app-border);
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 14px;
+  border-radius: var(--radius-md);
+  padding: var(--space-2) 10px;
+  font-size: var(--text-md);
+  transition: box-shadow var(--dur-fast) var(--ease);
+}
+
+.item-row:hover {
+  box-shadow: var(--shadow-sm);
 }
 
 .item-row.done .item-title {
@@ -396,19 +472,50 @@ async function onRowAction(key: string, index: number) {
 .item-drag-handle {
   cursor: grab;
   color: var(--app-faint);
-  letter-spacing: -2px;
+  display: flex;
+  align-items: center;
   user-select: none;
-  font-size: 13px;
 }
 
 .item-icon {
-  font-size: 16px;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 类型节点色：与设计令牌对应 */
+.item-icon[data-type='transport'] {
+  background: var(--type-transport-soft);
+  color: var(--type-transport);
+}
+
+.item-icon[data-type='stay'] {
+  background: var(--type-stay-soft);
+  color: var(--type-stay);
+}
+
+.item-icon[data-type='food'] {
+  background: var(--type-food-soft);
+  color: var(--type-food);
+}
+
+.item-icon[data-type='play'] {
+  background: var(--type-play-soft);
+  color: var(--type-play);
+}
+
+.item-icon[data-type='other'] {
+  background: var(--type-other-soft);
+  color: var(--type-other);
 }
 
 .item-time {
-  font-variant-numeric: tabular-nums;
   color: var(--app-muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
   min-width: 44px;
 }
 
@@ -418,7 +525,7 @@ async function onRowAction(key: string, index: number) {
 
 .item-note {
   color: var(--app-muted-soft);
-  font-size: 12px;
+  font-size: var(--text-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -435,9 +542,9 @@ async function onRowAction(key: string, index: number) {
 
 .empty-day {
   color: var(--app-faint);
-  font-size: 13px;
+  font-size: var(--text-sm);
   text-align: center;
-  padding: 8px 0;
+  padding: var(--space-2) 0;
 }
 
 .drag-ghost {
@@ -448,6 +555,17 @@ async function onRowAction(key: string, index: number) {
 .modal-footer {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
+  gap: var(--space-2);
+}
+
+@media (max-width: 720px) {
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .toolbar-right {
+    justify-content: flex-end;
+  }
 }
 </style>
