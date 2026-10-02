@@ -102,6 +102,11 @@ async function applyPushedTrip(raw: unknown) {
     message.error('接入方推来的行程没通过校验，已拒绝写入')
     return
   }
+  // 纵深防御：会话只服务于本行程，其余一律拒收，防止接入方注入不相干行程
+  if (incoming.id !== props.trip.id) {
+    message.error('接入方推来的不是本会话共享的行程，已拒绝写入')
+    return
+  }
   const local = tripsStore.trips.find((t) => t.id === incoming.id)
   if (local) history.push(local, '接入方推送前的版本')
   await tripsStore.importTrip(incoming, local ? 'overwrite' : 'asNew')
@@ -159,6 +164,8 @@ watch(
 const joinCode = ref('')
 const target = ref<JoinTarget | null>(null)
 const hostTripName = ref('')
+/** 握手拿到的主机共享行程 id；pull/push 都用它做一致性校验 */
+const hostTripId = ref('')
 const joining = ref(false)
 const pulling = ref(false)
 const pushing = ref(false)
@@ -173,6 +180,7 @@ async function connect(codeText?: string) {
     const info = await fetchInfo(t)
     target.value = t
     hostTripName.value = info.tripName
+    hostTripId.value = info.tripId ?? ''
     joinCode.value = code
     message.success(`已连上主机，会话号 ${info.sessionId}`)
   } catch (e) {
@@ -204,6 +212,11 @@ async function doPull() {
   try {
     const raw = await pullTrip(target.value)
     const incoming = tripSchema.parse(raw)
+    // 纵深防御：拉到的必须还是握手时那份行程，防止会话被主机换内容
+    if (hostTripId.value && incoming.id !== hostTripId.value) {
+      message.error('主机返回的不是本会话共享的行程，已拒绝写入')
+      return
+    }
     const local = tripsStore.trips.find((t) => t.id === incoming.id)
     if (local) history.push(local, '从局域网主机拉取前的版本')
     await tripsStore.importTrip(incoming, local ? 'overwrite' : 'asNew')
@@ -219,6 +232,11 @@ async function doPull() {
 
 async function doPush() {
   if (!target.value) return
+  // 纵深防御：只允许把本会话对应的行程推给主机，防止误推/错推
+  if (hostTripId.value && props.trip.id !== hostTripId.value) {
+    message.error('当前行程不是本会话共享的那份，已阻止推送')
+    return
+  }
   pushing.value = true
   try {
     await pushTrip(target.value, plain(props.trip))

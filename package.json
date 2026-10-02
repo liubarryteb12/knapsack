@@ -1,7 +1,7 @@
 {
   "name": "knapsack",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "离线优先的个人旅行规划应用",
   "engines": {

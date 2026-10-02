@@ -6,7 +6,7 @@ import {
   NAlert, NSpin, NTag,
 } from 'naive-ui'
 import { useTripsStore } from '../stores/trips'
-import { loadAiConfig, checkAiReachable } from '../utils/aiConfig'
+import { loadAiConfigWithKey, checkAiReachable } from '../utils/aiConfig'
 import { generateDraft, AiError, draftToTrip, type AiDraft } from '../utils/aiDraft'
 import { typeIcon } from './itemMeta'
 import type { TripDay } from '../schema/trip'
@@ -57,7 +57,7 @@ async function generate() {
   loading.value = true
   errorMsg.value = ''
   draft.value = null
-  const config = loadAiConfig()
+  const config = await loadAiConfigWithKey()
   const start = toDateStr(new Date(range.value[0]))
   const end = toDateStr(new Date(range.value[1]))
   try {

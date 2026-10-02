@@ -173,6 +173,7 @@ export interface HostHandshake {
   app: string
   protocol: string
   sessionId: string
+  tripId?: string
   tripName: string
 }
 

@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { NSwitch, NInput, NButton, NCard, NForm, NFormItem, NSelect, NRadioGroup, NRadioButton, useMessage } from 'naive-ui'
 import { useTripsStore } from '../stores/trips'
 import type { Trip } from '../schema/trip'
-import { loadAiConfig, saveAiConfig, testAiConnection, fetchModelList, type AiConfig } from '../utils/aiConfig'
+import { loadAiConfigWithKey, saveAiConfig, testAiConnection, fetchModelList, type AiConfig } from '../utils/aiConfig'
 import { useThemeStore, type ThemeMode } from '../stores/theme'
 
 const tripsStore = useTripsStore()
@@ -68,14 +68,14 @@ async function fetchModels(auto = false) {
   if (!auto) message.success(result.message)
 }
 
-onMounted(() => {
-  ai.value = loadAiConfig()
+onMounted(async () => {
+  ai.value = await loadAiConfigWithKey()
   // 配置齐全就自动拉一次，省得手点；失败静默，仍可用「获取列表」重试
   if (ai.value.baseURL && ai.value.apiKey) void fetchModels(true)
 })
 
 function persistAi() {
-  saveAiConfig(ai.value)
+  void saveAiConfig(ai.value)
 }
 
 async function runTest() {

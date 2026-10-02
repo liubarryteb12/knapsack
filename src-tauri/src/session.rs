@@ -237,6 +237,7 @@ fn do_info(inner: &Shared) -> Result<Value, (StatusCode, String)> {
         "app": "knapsack",
         "protocol": PROTOCOL,
         "sessionId": info.session_id,
+        "tripId": info.trip_id,
         "tripName": info.trip_name,
     }))
 }
@@ -674,6 +675,7 @@ mod tests {
         let info: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(info["app"], "knapsack");
         assert_eq!(info["tripName"], "杭州行");
+        assert_eq!(info["tripId"], "t1");
 
         // 2) 拉取
         let (status, body, _) = raw_request(addr, "POST", "/pull", &seal_with(&key, &json!({})));
