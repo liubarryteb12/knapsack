@@ -16,6 +16,12 @@ const NONCE_LEN = 12
 const TAG_LEN = 16
 const KEY_LEN = 32
 
+/**
+ * 明确的字节序列类型。TS 5.7 起 `Uint8Array` 默认带 `ArrayBufferLike` 参数，
+ * 而 Web Crypto 与 fetch 只接受 `ArrayBuffer` 后端，这里统一收口。
+ */
+export type Bytes = Uint8Array<ArrayBuffer>
+
 export interface SessionInfo {
   ip: string
   port: number
@@ -28,7 +34,7 @@ export interface SessionInfo {
 
 // ---------- base64url ----------
 
-export function b64urlToBytes(s: string): Uint8Array {
+export function b64urlToBytes(s: string): Bytes {
   const pad = s.length % 4 === 0 ? '' : '='.repeat(4 - (s.length % 4))
   const b64 = s.replace(/-/g, '+').replace(/_/g, '/') + pad
   const bin = atob(b64)
@@ -54,7 +60,7 @@ export async function importKey(keyB64: string): Promise<CryptoKey> {
 }
 
 /** 加密封装：随机 nonce + AES-GCM */
-export async function seal(key: CryptoKey, plain: Uint8Array): Promise<Uint8Array> {
+export async function seal(key: CryptoKey, plain: Bytes): Promise<Bytes> {
   const nonce = crypto.getRandomValues(new Uint8Array(NONCE_LEN))
   const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, key, plain))
   const out = new Uint8Array(NONCE_LEN + ct.length)
@@ -64,7 +70,7 @@ export async function seal(key: CryptoKey, plain: Uint8Array): Promise<Uint8Arra
 }
 
 /** 解密校验：密钥不对或被篡改都会抛错 */
-export async function open(key: CryptoKey, msg: Uint8Array): Promise<Uint8Array> {
+export async function open(key: CryptoKey, msg: Bytes): Promise<Bytes> {
   if (msg.length < NONCE_LEN + TAG_LEN) throw new Error('报文过短，不是合法的信封')
   const nonce = msg.subarray(0, NONCE_LEN)
   const ct = msg.subarray(NONCE_LEN)
@@ -75,11 +81,11 @@ export async function open(key: CryptoKey, msg: Uint8Array): Promise<Uint8Array>
   }
 }
 
-export async function sealJson(key: CryptoKey, value: unknown): Promise<Uint8Array> {
+export async function sealJson(key: CryptoKey, value: unknown): Promise<Bytes> {
   return seal(key, new TextEncoder().encode(JSON.stringify(value)))
 }
 
-export async function openJson<T>(key: CryptoKey, msg: Uint8Array): Promise<T> {
+export async function openJson<T>(key: CryptoKey, msg: Bytes): Promise<T> {
   const plain = await open(key, msg)
   try {
     return JSON.parse(new TextDecoder().decode(plain)) as T
@@ -134,7 +140,7 @@ export function baseUrl(t: Pick<JoinTarget, 'ip' | 'port'>): string {
 
 // ---------- 接入方（手机）请求 ----------
 
-async function post(key: CryptoKey, url: string, payload: unknown): Promise<Uint8Array> {
+async function post(key: CryptoKey, url: string, payload: unknown): Promise<Bytes> {
   const body = await sealJson(key, payload)
   const resp = await fetch(url, {
     method: 'POST',

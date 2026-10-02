@@ -9,6 +9,9 @@
 //! - 密钥随机生成、只出现在二维码里，不走网络明文传输；局域网内的被动嗅探者
 //!   只能看到密文，且没有密钥无法伪造或篡改（GCM 自带完整性校验）。
 //! - 会话关闭即停止监听、清空内存中的行程副本与密钥。
+//!
+//! 结构上把「协议处理」(`do_info` / `do_pull` / `do_push`) 与 Tauri 解耦，
+//! 只依赖 `Arc<Mutex<Inner>>`，因此可以直接被单元测试驱动。
 
 use std::net::UdpSocket;
 use std::sync::{Arc, Mutex};
@@ -55,11 +58,14 @@ pub struct SessionInfo {
 pub struct SessionStatus {
     pub running: bool,
     pub info: Option<SessionInfo>,
-    /// 最近一次收到手机推送的时间（epoch 毫秒）
+    /// 最近一次收到接入方推送的时间（epoch 毫秒）
     pub last_push_at: Option<u64>,
-    /// 最近一次被手机拉取的时间（epoch 毫秒）
+    /// 最近一次被接入方拉取的时间（epoch 毫秒）
     pub last_pull_at: Option<u64>,
 }
+
+/// 收到接入方推送时的回调（Tauri 下是向前端发事件）
+type PushSink = Box<dyn Fn(Value) + Send + Sync>;
 
 struct Inner {
     info: Option<SessionInfo>,
@@ -68,27 +74,42 @@ struct Inner {
     trip: Value,
     last_push_at: Option<u64>,
     last_pull_at: Option<u64>,
+    on_push: Option<PushSink>,
 }
 
-/// 共享会话状态。以 Arc 包住，既能被 Tauri 命令访问，也能被 axum handler 访问。
-#[derive(Clone)]
+impl Inner {
+    fn empty() -> Self {
+        Self {
+            info: None,
+            key: Vec::new(),
+            trip: Value::Null,
+            last_push_at: None,
+            last_pull_at: None,
+            on_push: None,
+        }
+    }
+}
+
+type Shared = Arc<Mutex<Inner>>;
+
+/// 会话状态：既被 Tauri 命令访问，也被 axum handler 访问
 pub struct SessionState {
-    inner: Arc<Mutex<Inner>>,
-    app: AppHandle,
+    inner: Shared,
     server: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
 }
 
 impl SessionState {
     pub fn new(app: AppHandle) -> Self {
+        let shared = Arc::new(Mutex::new(Inner::empty()));
+        {
+            let mut g = shared.lock().unwrap();
+            let handle = app.clone();
+            g.on_push = Some(Box::new(move |trip| {
+                let _ = handle.emit("session://pushed", trip);
+            }));
+        }
         Self {
-            inner: Arc::new(Mutex::new(Inner {
-                info: None,
-                key: Vec::new(),
-                trip: Value::Null,
-                last_push_at: None,
-                last_pull_at: None,
-            })),
-            app,
+            inner: shared,
             server: Arc::new(Mutex::new(None)),
         }
     }
@@ -140,89 +161,107 @@ fn decrypt(key: &[u8], msg: &[u8]) -> Result<Vec<u8>, String> {
         .map_err(|_| "解密失败：密钥不匹配或报文被篡改".to_string())
 }
 
-fn decrypt_json(state: &SessionState, body: &Bytes) -> Result<Value, (StatusCode, String)> {
-    let key = {
-        let g = state.inner.lock().unwrap();
-        g.key.clone()
-    };
+fn current_key(inner: &Shared) -> Result<Vec<u8>, (StatusCode, String)> {
+    let key = inner.lock().unwrap().key.clone();
     if key.is_empty() {
         return Err((StatusCode::CONFLICT, "会话未开启".to_string()));
     }
+    Ok(key)
+}
+
+fn open_json(inner: &Shared, body: &[u8]) -> Result<Value, (StatusCode, String)> {
+    let key = current_key(inner)?;
     let plain = decrypt(&key, body).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     serde_json::from_slice(&plain)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("密文解出来不是合法 JSON：{e}")))
 }
 
-fn encrypt_json(state: &SessionState, value: &Value) -> Result<Vec<u8>, (StatusCode, String)> {
-    let key = {
-        let g = state.inner.lock().unwrap();
-        g.key.clone()
-    };
-    let plain = serde_json::to_vec(value)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+fn seal_json(inner: &Shared, value: &Value) -> Result<Vec<u8>, (StatusCode, String)> {
+    let key = current_key(inner)?;
+    let plain =
+        serde_json::to_vec(value).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     encrypt(&key, &plain).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
 }
 
-// ---------- HTTP handlers ----------
+// ---------- 协议处理（与 HTTP / Tauri 解耦，可直接单测） ----------
 
-/// `GET /info`：明文握手信息，不含任何秘密，用来让接入方确认「对面确实是行囊主机」。
-async fn handle_info(State(state): State<SessionState>) -> impl IntoResponse {
-    let g = state.inner.lock().unwrap();
-    match &g.info {
-        Some(info) => Json(json!({
-            "app": "knapsack",
-            "protocol": PROTOCOL,
-            "sessionId": info.session_id,
-            "tripName": info.trip_name,
-        }))
-        .into_response(),
-        None => (StatusCode::CONFLICT, "会话未开启").into_response(),
-    }
+fn do_info(inner: &Shared) -> Result<Value, (StatusCode, String)> {
+    let g = inner.lock().unwrap();
+    let Some(info) = &g.info else {
+        return Err((StatusCode::CONFLICT, "会话未开启".to_string()));
+    };
+    Ok(json!({
+        "app": "knapsack",
+        "protocol": PROTOCOL,
+        "sessionId": info.session_id,
+        "tripName": info.trip_name,
+    }))
 }
 
-/// `POST /pull`：接入方取走主机这份行程。
-async fn handle_pull(State(state): State<SessionState>, body: Bytes) -> impl IntoResponse {
-    if let Err(e) = decrypt_json(&state, &body) {
-        return e.into_response();
-    }
-    let payload = {
-        let mut g = state.inner.lock().unwrap();
+/// 接入方取走主机这份行程
+fn do_pull(inner: &Shared, body: &[u8]) -> Result<Vec<u8>, (StatusCode, String)> {
+    open_json(inner, body)?; // 密钥不对直接拒
+    let trip = {
+        let mut g = inner.lock().unwrap();
         g.last_pull_at = Some(now_ms());
         g.trip.clone()
     };
-    match encrypt_json(&state, &payload) {
-        Ok(ct) => ct.into_response(),
-        Err(e) => e.into_response(),
-    }
+    seal_json(inner, &trip)
 }
 
-/// `POST /push`：接入方把它的行程推给主机；主机先记下来并通知本机前端应用。
-async fn handle_push(State(state): State<SessionState>, body: Bytes) -> impl IntoResponse {
-    let payload = match decrypt_json(&state, &body) {
-        Ok(v) => v,
-        Err(e) => return e.into_response(),
-    };
-    let Some(trip) = payload.get("trip").cloned() else {
-        return (StatusCode::BAD_REQUEST, "报文缺少 trip 字段").into_response();
-    };
+/// 接入方把它的行程推给主机；主机通知本机前端去落库
+fn do_push(inner: &Shared, body: &[u8]) -> Result<Vec<u8>, (StatusCode, String)> {
+    let payload = open_json(inner, body)?;
+    let trip = payload
+        .get("trip")
+        .cloned()
+        .ok_or((StatusCode::BAD_REQUEST, "报文缺少 trip 字段".to_string()))?;
     if !trip.is_object() {
-        return (StatusCode::BAD_REQUEST, "trip 不是对象").into_response();
+        return Err((StatusCode::BAD_REQUEST, "trip 不是对象".to_string()));
     }
-
-    {
-        let mut g = state.inner.lock().unwrap();
+    let sink = {
+        let mut g = inner.lock().unwrap();
         g.last_push_at = Some(now_ms());
+        g.on_push.take()
+    };
+    // 回调取出后立刻放回，避免锁着执行外部逻辑
+    if let Some(f) = &sink {
+        f(trip.clone());
     }
-    // 交给本机前端决定怎么落库（覆盖 + 进撤销栈），主机端不直接写 IndexedDB
-    let _ = state.app.emit("session://pushed", trip);
+    {
+        let mut g = inner.lock().unwrap();
+        if g.on_push.is_none() {
+            g.on_push = sink;
+        }
+    }
+    seal_json(inner, &json!({ "ok": true }))
+}
 
-    match encrypt_json(&state, &json!({ "ok": true })) {
+// ---------- HTTP ----------
+
+fn respond(result: Result<Vec<u8>, (StatusCode, String)>) -> axum::response::Response {
+    match result {
         Ok(ct) => ct.into_response(),
-        Err(e) => e.into_response(),
+        Err((code, msg)) => (code, msg).into_response(),
     }
 }
 
-fn build_router(state: SessionState) -> Router {
+async fn handle_info(State(inner): State<Shared>) -> impl IntoResponse {
+    match do_info(&inner) {
+        Ok(v) => Json(v).into_response(),
+        Err((code, msg)) => (code, msg).into_response(),
+    }
+}
+
+async fn handle_pull(State(inner): State<Shared>, body: Bytes) -> impl IntoResponse {
+    respond(do_pull(&inner, &body))
+}
+
+async fn handle_push(State(inner): State<Shared>, body: Bytes) -> impl IntoResponse {
+    respond(do_push(&inner, &body))
+}
+
+fn build_router(inner: Shared) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -232,17 +271,27 @@ fn build_router(state: SessionState) -> Router {
         .route("/pull", post(handle_pull))
         .route("/push", post(handle_push))
         .layer(cors)
-        .with_state(state)
+        .with_state(inner)
 }
 
 // ---------- Tauri commands ----------
 
+fn stop_server(state: &SessionState) {
+    if let Some(h) = state.server.lock().unwrap().take() {
+        h.abort();
+    }
+    let mut g = state.inner.lock().unwrap();
+    g.info = None;
+    g.key.clear();
+    g.trip = Value::Null;
+    g.last_push_at = None;
+    g.last_pull_at = None;
+}
+
 /// 开启会话：生成密钥、绑定随机端口、起服务。
 #[tauri::command]
 pub async fn session_start(app: AppHandle, trip: Value) -> Result<SessionInfo, String> {
-    let state = app.state::<SessionState>().inner().clone();
-
-    // 重复开启时先关掉旧的
+    let state = app.state::<SessionState>();
     stop_server(&state);
 
     let trip_id = trip
@@ -262,7 +311,8 @@ pub async fn session_start(app: AppHandle, trip: Value) -> Result<SessionInfo, S
     rand::thread_rng().fill_bytes(&mut sid_bytes);
     let session_id = sid_bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
 
-    let listener = std::net::TcpListener::bind("0.0.0.0:0").map_err(|e| format!("端口绑定失败：{e}"))?;
+    let listener =
+        std::net::TcpListener::bind("0.0.0.0:0").map_err(|e| format!("端口绑定失败：{e}"))?;
     let port = listener
         .local_addr()
         .map_err(|e| format!("读端口失败：{e}"))?
@@ -289,7 +339,7 @@ pub async fn session_start(app: AppHandle, trip: Value) -> Result<SessionInfo, S
         g.last_pull_at = None;
     }
 
-    let router = build_router(state.clone());
+    let router = build_router(state.inner.clone());
     let handle = tauri::async_runtime::spawn(async move {
         match tokio::net::TcpListener::from_std(listener) {
             Ok(l) => {
@@ -306,22 +356,10 @@ pub async fn session_start(app: AppHandle, trip: Value) -> Result<SessionInfo, S
     Ok(info)
 }
 
-fn stop_server(state: &SessionState) {
-    if let Some(h) = state.server.lock().unwrap().take() {
-        h.abort();
-    }
-    let mut g = state.inner.lock().unwrap();
-    g.info = None;
-    g.key.clear();
-    g.trip = Value::Null;
-    g.last_push_at = None;
-    g.last_pull_at = None;
-}
-
 /// 关闭会话：停止监听并清空密钥与行程副本。
 #[tauri::command]
 pub async fn session_stop(app: AppHandle) -> Result<(), String> {
-    let state = app.state::<SessionState>().inner().clone();
+    let state = app.state::<SessionState>();
     stop_server(&state);
     log::info!("局域网会话已关闭");
     Ok(())
@@ -329,7 +367,7 @@ pub async fn session_stop(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn session_status(app: AppHandle) -> Result<SessionStatus, String> {
-    let state = app.state::<SessionState>().inner().clone();
+    let state = app.state::<SessionState>();
     let g = state.inner.lock().unwrap();
     Ok(SessionStatus {
         running: g.info.is_some(),
@@ -339,21 +377,22 @@ pub async fn session_status(app: AppHandle) -> Result<SessionStatus, String> {
     })
 }
 
-/// 主机本地改动后同步给服务端的内存副本，保证手机拉取到的是最新版。
+/// 主机本地改动后同步给服务端的内存副本，保证接入方拉取到的是最新版。
 #[tauri::command]
 pub async fn session_update_trip(app: AppHandle, trip: Value) -> Result<(), String> {
-    let state = app.state::<SessionState>().inner().clone();
+    let state = app.state::<SessionState>();
     let mut g = state.inner.lock().unwrap();
-    if g.info.is_none() {
+    let Some(info) = g.info.as_ref() else {
         return Err("会话未开启".to_string());
-    }
+    };
     let id = trip.get("id").and_then(Value::as_str).unwrap_or_default();
-    if id != g.info.as_ref().map(|i| i.trip_id.as_str()).unwrap_or_default() {
+    if id != info.trip_id {
         return Err("会话绑定的是另一份行程，已忽略".to_string());
     }
-    if let Some(name) = trip.get("name").and_then(Value::as_str) {
+    let name = trip.get("name").and_then(Value::as_str).map(str::to_string);
+    if let Some(n) = name {
         if let Some(info) = g.info.as_mut() {
-            info.trip_name = name.to_string();
+            info.trip_name = n;
         }
     }
     g.trip = trip;
@@ -369,6 +408,33 @@ mod tests {
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
             .collect()
+    }
+
+    fn test_state() -> (Shared, Arc<Mutex<Vec<Value>>>) {
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let sink_target = received.clone();
+        let shared = Arc::new(Mutex::new(Inner::empty()));
+        {
+            let mut g = shared.lock().unwrap();
+            g.on_push = Some(Box::new(move |trip| sink_target.lock().unwrap().push(trip)));
+        }
+        (shared, received)
+    }
+
+    fn start(shared: &Shared, trip: Value) -> Vec<u8> {
+        let key: Vec<u8> = (0u8..32).collect();
+        let mut g = shared.lock().unwrap();
+        g.key = key.clone();
+        g.trip = trip.clone();
+        g.info = Some(SessionInfo {
+            ip: "127.0.0.1".into(),
+            port: 1234,
+            key_b64: URL_SAFE_NO_PAD.encode(&key),
+            session_id: "abc123".into(),
+            trip_id: trip.get("id").and_then(Value::as_str).unwrap_or("").into(),
+            trip_name: trip.get("name").and_then(Value::as_str).unwrap_or("").into(),
+        });
+        key
     }
 
     /// 与前端 scripts/test-lansession.ts 打印的 KAT 对拍：
@@ -406,5 +472,169 @@ mod tests {
 
         // 截断
         assert!(decrypt(&key, &msg[..20]).is_err());
+    }
+
+    fn seal_with(key: &[u8], v: &Value) -> Vec<u8> {
+        encrypt(key, &serde_json::to_vec(v).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn pull_returns_host_trip_and_updates_timestamp() {
+        let (shared, _rx) = test_state();
+        let trip = json!({ "id": "t1", "name": "杭州行" });
+        let key = start(&shared, trip.clone());
+
+        let body = seal_with(&key, &json!({}));
+        let ct = do_pull(&shared, &body).unwrap();
+        let got: Value = serde_json::from_slice(&decrypt(&key, &ct).unwrap()).unwrap();
+        assert_eq!(got, trip);
+        assert!(shared.lock().unwrap().last_pull_at.is_some());
+    }
+
+    #[test]
+    fn pull_rejects_wrong_key() {
+        let (shared, _rx) = test_state();
+        start(&shared, json!({ "id": "t1", "name": "杭州行" }));
+
+        let bad = seal_with(&[9u8; 32], &json!({}));
+        let err = do_pull(&shared, &bad).unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn push_surfaces_trip_to_host_sink() {
+        let (shared, rx) = test_state();
+        let key = start(&shared, json!({ "id": "t1", "name": "杭州行" }));
+
+        let incoming = json!({ "id": "t1", "name": "杭州行（手机改过）" });
+        let body = seal_with(&key, &json!({ "trip": incoming }));
+        let ct = do_push(&shared, &body).unwrap();
+
+        let ack: Value = serde_json::from_slice(&decrypt(&key, &ct).unwrap()).unwrap();
+        assert_eq!(ack, json!({ "ok": true }));
+        assert_eq!(*rx.lock().unwrap(), vec![incoming]);
+        assert!(shared.lock().unwrap().last_push_at.is_some());
+    }
+
+    #[test]
+    fn push_rejects_payload_without_trip() {
+        let (shared, rx) = test_state();
+        let key = start(&shared, json!({ "id": "t1", "name": "杭州行" }));
+
+        let body = seal_with(&key, &json!({ "nope": 1 }));
+        let err = do_push(&shared, &body).unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(rx.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn endpoints_conflict_when_session_not_started() {
+        let (shared, _rx) = test_state();
+        assert_eq!(do_info(&shared).unwrap_err().0, StatusCode::CONFLICT);
+        assert_eq!(
+            do_pull(&shared, &[0u8; 40]).unwrap_err().0,
+            StatusCode::CONFLICT
+        );
+    }
+
+    #[test]
+    fn info_exposes_no_secret() {
+        let (shared, _rx) = test_state();
+        let key = start(&shared, json!({ "id": "t1", "name": "杭州行" }));
+        let v = do_info(&shared).unwrap();
+        assert_eq!(v["app"], "knapsack");
+        assert_eq!(v["protocol"], PROTOCOL);
+        let text = v.to_string();
+        // 明文握手信息里绝不能出现密钥
+        assert!(!text.contains(&URL_SAFE_NO_PAD.encode(&key)));
+    }
+
+    // ---------- 真 socket 集成测试：覆盖 axum 路由 / body 提取 / CORS ----------
+
+    use std::io::{Read, Write};
+    use std::net::{SocketAddr, TcpStream};
+    use std::time::Duration;
+
+    /// 极简 HTTP/1.1 客户端：只处理 Content-Length 响应，够用即可
+    fn raw_request(addr: SocketAddr, method: &str, path: &str, body: &[u8]) -> (u16, Vec<u8>, String) {
+        let mut s = TcpStream::connect(addr).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        let head = format!(
+            "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        s.write_all(head.as_bytes()).unwrap();
+        s.write_all(body).unwrap();
+        let mut buf = Vec::new();
+        s.read_to_end(&mut buf).unwrap();
+
+        let split = buf.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+        let head_text = String::from_utf8_lossy(&buf[..split]).to_string();
+        let status: u16 = head_text
+            .lines()
+            .next()
+            .unwrap()
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .parse()
+            .unwrap();
+        (status, buf[split + 4..].to_vec(), head_text)
+    }
+
+    fn serve(router: Router) -> SocketAddr {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tauri::async_runtime::spawn(async move {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            tx.send(listener.local_addr().unwrap()).unwrap();
+            let _ = axum::serve(listener, router).await;
+        });
+        rx.recv_timeout(Duration::from_secs(5)).unwrap()
+    }
+
+    /// 手机端那一整套动作，在真实 HTTP 上跑一遍：
+    /// GET /info 握手 → POST /pull 取行程 → POST /push 回推 → 错误密钥被拒
+    #[test]
+    fn http_end_to_end_over_tcp() {
+        let (shared, rx) = test_state();
+        let trip = json!({ "id": "t1", "name": "杭州行" });
+        let key = start(&shared, trip.clone());
+        let addr = serve(build_router(shared.clone()));
+
+        // 1) 明文握手，且带 CORS 头（手机页面是 https://localhost，属跨域）
+        let (status, body, head) = raw_request(addr, "GET", "/info", &[]);
+        assert_eq!(status, 200);
+        assert!(head.to_lowercase().contains("access-control-allow-origin"));
+        let info: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(info["app"], "knapsack");
+        assert_eq!(info["tripName"], "杭州行");
+
+        // 2) 拉取
+        let (status, body, _) = raw_request(addr, "POST", "/pull", &seal_with(&key, &json!({})));
+        assert_eq!(status, 200);
+        let pulled: Value = serde_json::from_slice(&decrypt(&key, &body).unwrap()).unwrap();
+        assert_eq!(pulled, trip);
+
+        // 3) 回推，主机侧应收到
+        let incoming = json!({ "id": "t1", "name": "杭州行（手机改过）" });
+        let (status, body, _) = raw_request(
+            addr,
+            "POST",
+            "/push",
+            &seal_with(&key, &json!({ "trip": incoming })),
+        );
+        assert_eq!(status, 200);
+        let ack: Value = serde_json::from_slice(&decrypt(&key, &body).unwrap()).unwrap();
+        assert_eq!(ack, json!({ "ok": true }));
+        // 事件回调是同步的，这里应立刻能看到
+        assert_eq!(rx.lock().unwrap().len(), 1);
+
+        // 4) 错误密钥 → 400，且不泄露原因之外的信息
+        let (status, _, _) = raw_request(addr, "POST", "/pull", &seal_with(&[7u8; 32], &json!({})));
+        assert_eq!(status, 400);
+
+        // 5) 未知路径 → 404
+        let (status, _, _) = raw_request(addr, "GET", "/nope", &[]);
+        assert_eq!(status, 404);
     }
 }
