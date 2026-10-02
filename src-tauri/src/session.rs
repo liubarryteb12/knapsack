@@ -711,7 +711,22 @@ mod tests {
     #[test]
     #[ignore]
     fn dev_host() {
-        let (shared, rx) = test_state();
+        // 收到推送就立刻打印，方便联调时观察
+        let shared = Arc::new(Mutex::new(Inner::empty()));
+        {
+            let mut g = shared.lock().unwrap();
+            g.on_push = Some(Box::new(|trip| {
+                println!(
+                    ">>> 收到手机推送：name={} items={}",
+                    trip.get("name").and_then(Value::as_str).unwrap_or("?"),
+                    trip
+                        .get("days")
+                        .and_then(Value::as_array)
+                        .map(|d| d.len())
+                        .unwrap_or(0)
+                );
+            }));
+        }
         let trip = json!({
             "format": "trip.v1",
             "id": "devtrip01",
@@ -747,6 +762,6 @@ mod tests {
         println!("================================================\n");
 
         std::thread::sleep(Duration::from_secs(600));
-        println!("dev_host 结束，收到推送 {} 次", rx.lock().unwrap().len());
+        println!("dev_host 结束");
     }
 }
