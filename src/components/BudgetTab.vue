@@ -25,19 +25,142 @@ const usedPct = computed(() =>
     : 0,
 )
 
-const categoryStats = computed(() => {
+const CATEGORIES: ExpenseCategory[] = ['transport', 'stay', 'food', 'play', 'other']
+
+// ---- 分类预算 ----
+const catUsedFen = computed(() => {
   const map = new Map<ExpenseCategory, number>()
   for (const e of props.trip.expenses) {
     map.set(e.category, (map.get(e.category) ?? 0) + e.amountFen)
   }
-  return [...map.entries()]
-    .map(([category, fen]) => ({
-      category,
-      fen,
-      pct: totalUsedFen.value > 0 ? Math.round((fen / totalUsedFen.value) * 100) : 0,
-    }))
-    .sort((a, b) => b.fen - a.fen)
+  return map
 })
+
+/** 有额度或有花费的分类，按固定顺序展示已用/预算 */
+const catRows = computed(() =>
+  CATEGORIES.map((category) => {
+    const usedFen = catUsedFen.value.get(category) ?? 0
+    const budgetFen = props.trip.categoryBudgetsFen[category] ?? 0
+    const pct = budgetFen > 0 ? Math.min(100, Math.round((usedFen / budgetFen) * 100)) : 0
+    return {
+      category,
+      label: expenseCategoryLabel[category] ?? category,
+      usedFen,
+      budgetFen,
+      pct,
+      over: budgetFen > 0 && usedFen > budgetFen,
+    }
+  }).filter((r) => r.budgetFen > 0 || r.usedFen > 0),
+)
+
+const showCatBudget = ref(false)
+const catBudgetYuan = ref<Record<ExpenseCategory, string>>({
+  transport: '',
+  stay: '',
+  food: '',
+  play: '',
+  other: '',
+})
+
+function openCatBudget() {
+  const next: Record<ExpenseCategory, string> = {
+    transport: '',
+    stay: '',
+    food: '',
+    play: '',
+    other: '',
+  }
+  for (const c of CATEGORIES) {
+    const fen = props.trip.categoryBudgetsFen[c] ?? 0
+    next[c] = fen > 0 ? fenToYuan(fen) : ''
+  }
+  catBudgetYuan.value = next
+  showCatBudget.value = true
+}
+
+async function saveCatBudget() {
+  const next: Partial<Record<ExpenseCategory, number>> = {}
+  for (const c of CATEGORIES) {
+    const raw = catBudgetYuan.value[c].trim()
+    if (raw === '') continue
+    const fen = yuanToFen(raw)
+    if (fen === null || fen < 0) {
+      message.error(`「${expenseCategoryLabel[c]}」金额格式不对，请输入例如 1500.00`)
+      return
+    }
+    if (fen > 0) next[c] = fen
+  }
+  props.trip.categoryBudgetsFen = next
+  await tripsStore.saveTrip(props.trip)
+  showCatBudget.value = false
+  message.success('分类预算已保存')
+}
+
+// ---- 导入预算（只读文件里的预算字段，不动花费） ----
+const budgetFileInput = ref<HTMLInputElement | null>(null)
+const showImportBudget = ref(false)
+const pendingBudget = ref<{
+  totalBudgetFen: number | null
+  categoryBudgetsFen: Partial<Record<ExpenseCategory, number>>
+} | null>(null)
+
+function pickBudgetFile() {
+  budgetFileInput.value?.click()
+}
+
+async function onBudgetFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  let data: { totalBudgetFen?: unknown; categoryBudgetsFen?: unknown }
+  try {
+    data = JSON.parse(await readTripFileInput(file)) as typeof data
+  } catch (err) {
+    message.error(err instanceof TripImportError ? err.message : '导入失败：文件无法解析为 .trip')
+    return
+  }
+  let total: number | null = null
+  if (
+    typeof data.totalBudgetFen === 'number' &&
+    Number.isInteger(data.totalBudgetFen) &&
+    data.totalBudgetFen >= 0
+  ) {
+    total = data.totalBudgetFen
+  }
+  const cats: Partial<Record<ExpenseCategory, number>> = {}
+  if (data.categoryBudgetsFen && typeof data.categoryBudgetsFen === 'object') {
+    for (const [k, v] of Object.entries(data.categoryBudgetsFen as Record<string, unknown>)) {
+      if (
+        CATEGORIES.includes(k as ExpenseCategory) &&
+        typeof v === 'number' &&
+        Number.isInteger(v) &&
+        v > 0
+      ) {
+        cats[k as ExpenseCategory] = v
+      }
+    }
+  }
+  if (total === null && Object.keys(cats).length === 0) {
+    message.error('文件里没有可用的预算字段（totalBudgetFen / categoryBudgetsFen）')
+    return
+  }
+  pendingBudget.value = { totalBudgetFen: total, categoryBudgetsFen: cats }
+  showImportBudget.value = true
+}
+
+async function applyImportedBudget() {
+  const p = pendingBudget.value
+  if (!p) return
+  if (p.totalBudgetFen !== null) props.trip.totalBudgetFen = p.totalBudgetFen
+  if (Object.keys(p.categoryBudgetsFen).length > 0) {
+    props.trip.categoryBudgetsFen = p.categoryBudgetsFen
+  }
+  await tripsStore.saveTrip(props.trip)
+  showImportBudget.value = false
+  pendingBudget.value = null
+  message.success('预算已导入')
+}
 
 const memberOptions = computed(() =>
   props.trip.members.map((m) => ({ label: m.name, value: m.id })),
@@ -266,6 +389,10 @@ async function onExpenseAction(key: string, e: Expense) {
   <div class="budget">
     <!-- 总预算 -->
     <n-card size="small" class="section" title="预算">
+      <template #header-extra>
+        <n-button size="small" @click="pickBudgetFile">导入预算</n-button>
+      </template>
+      <input ref="budgetFileInput" type="file" accept=".trip,.json" style="display: none" @change="onBudgetFile" />
       <div class="budget-summary">
         <div class="budget-numbers">
           <span class="big">{{ formatFen(totalUsedFen) }}</span>
@@ -285,21 +412,31 @@ async function onExpenseAction(key: string, e: Expense) {
       </div>
     </n-card>
 
-    <!-- 分类占比 -->
-    <n-card size="small" class="section" title="分类占比">
-      <n-empty v-if="categoryStats.length === 0" description="暂无花费" size="small" />
-      <div v-for="stat in categoryStats" :key="stat.category" class="cat-row">
-        <span class="cat-label">{{ expenseCategoryLabel[stat.category] }}</span>
+    <!-- 分类预算 -->
+    <n-card size="small" class="section" title="分类预算">
+      <template #header-extra>
+        <n-button size="small" @click="openCatBudget">设置</n-button>
+      </template>
+      <n-empty
+        v-if="catRows.length === 0"
+        description="暂无分类预算，点「设置」给交通/住宿等分项定个额度"
+        size="small"
+      />
+      <div v-for="row in catRows" :key="row.category" class="cat-row">
+        <span class="cat-label">{{ row.label }}</span>
         <n-progress
           type="line"
-          :percentage="stat.pct"
+          :percentage="row.pct"
           :show-indicator="false"
           :height="8"
           :border-radius="4"
-          color="#818cf8"
+          :color="row.over ? '#ef4444' : '#6366f1'"
           class="cat-bar"
         />
-        <span class="cat-fen">{{ formatFen(stat.fen) }}（{{ stat.pct }}%）</span>
+        <span class="cat-fen" :class="{ over: row.over }">
+          {{ formatFen(row.usedFen) }}<template v-if="row.budgetFen > 0"> / {{ formatFen(row.budgetFen) }}</template>
+          <span v-if="row.budgetFen > 0" class="cat-pct">{{ row.pct }}%</span>
+        </span>
       </div>
     </n-card>
 
@@ -430,6 +567,41 @@ async function onExpenseAction(key: string, e: Expense) {
         <n-button type="primary" @click="addMember">添加</n-button>
       </div>
     </n-modal>
+
+    <!-- 分类预算设置 -->
+    <n-modal v-model:show="showCatBudget" preset="card" title="分类预算" style="width: min(420px, calc(100vw - 32px))">
+      <p class="muted small">分项额度，单位：元。留空表示该项不单独设限，仅受总预算约束。</p>
+      <n-form label-placement="left" label-width="60">
+        <n-form-item v-for="c in CATEGORIES" :key="c" :label="expenseCategoryLabel[c]">
+          <n-input v-model:value="catBudgetYuan[c]" placeholder="不限制" />
+        </n-form-item>
+      </n-form>
+      <template #footer>
+        <div class="modal-footer">
+          <n-button @click="showCatBudget = false">取消</n-button>
+          <n-button type="primary" @click="saveCatBudget">保存</n-button>
+        </div>
+      </template>
+    </n-modal>
+
+    <!-- 导入预算确认 -->
+    <n-modal v-model:show="showImportBudget" preset="card" title="导入预算" style="width: min(400px, calc(100vw - 32px))">
+      <p>将从文件导入以下预算，<strong>覆盖</strong>当前设置（不影响已有花费）：</p>
+      <ul class="import-list">
+        <li v-if="pendingBudget && pendingBudget.totalBudgetFen !== null">
+          总预算：{{ formatFen(pendingBudget.totalBudgetFen) }}
+        </li>
+        <li v-for="(fen, c) in pendingBudget?.categoryBudgetsFen ?? {}" :key="c">
+          {{ expenseCategoryLabel[c] ?? c }}：{{ formatFen(fen ?? 0) }}
+        </li>
+      </ul>
+      <template #footer>
+        <div class="modal-footer">
+          <n-button @click="showImportBudget = false">取消</n-button>
+          <n-button type="primary" @click="applyImportedBudget">确认导入</n-button>
+        </div>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -487,8 +659,25 @@ async function onExpenseAction(key: string, e: Expense) {
 .cat-fen {
   font-size: 12px;
   color: var(--app-muted);
-  min-width: 110px;
+  min-width: 146px;
   text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.cat-fen.over {
+  color: var(--app-danger);
+}
+
+.cat-pct {
+  margin-left: 6px;
+  color: var(--app-muted-soft);
+}
+
+.import-list {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.9;
 }
 
 .member-row {

@@ -18,13 +18,21 @@ const tripsStore = useTripsStore()
 const message = useMessage()
 
 const wish = ref('')
-const range = ref<[number, number] | null>(null)
+// 用两个单日期选择器，而不是 daterange：daterange 的双月面板在手机上会溢出屏幕，
+// 连「确认」都被挤出可视区，手指点不到。
+const startTs = ref<number | null>(null)
+const endTs = ref<number | null>(null)
+const range = computed<[number, number] | null>(() =>
+  startTs.value !== null && endTs.value !== null ? [startTs.value, endTs.value] : null,
+)
 const loading = ref(false)
 const errorMsg = ref('')
 const draft = ref<AiDraft | null>(null)
 const draftRange = ref<[number, number] | null>(null)
 
-const canGenerate = computed(() => wish.value.trim().length > 0 && range.value !== null && !loading.value)
+const canGenerate = computed(
+  () => wish.value.trim().length > 0 && range.value !== null && !loading.value,
+)
 
 /** 断网时按钮置灰：navigator.onLine 在安卓 WebView 不可靠，再补一次真实探活 */
 async function checkOnline(): Promise<boolean> {
@@ -42,6 +50,10 @@ async function checkOnline(): Promise<boolean> {
 async function generate() {
   if (!(await checkOnline())) return
   if (!range.value) return
+  if (range.value[1] < range.value[0]) {
+    message.error('结束日期不能早于开始日期')
+    return
+  }
   loading.value = true
   errorMsg.value = ''
   draft.value = null
@@ -120,10 +132,18 @@ function toDateStr(d: Date): string {
     </div>
     <div class="form-row date-row">
       <n-date-picker
-        v-model:value="range"
-        type="daterange"
-        clearable
-        style="flex: 1"
+        :value="startTs"
+        type="date"
+        placeholder="开始日期"
+        class="date-field"
+        @update:value="(ts: number | null) => (startTs = ts)"
+      />
+      <n-date-picker
+        :value="endTs"
+        type="date"
+        placeholder="结束日期"
+        class="date-field"
+        @update:value="(ts: number | null) => (endTs = ts)"
       />
       <n-button type="primary" :loading="loading" :disabled="!canGenerate" @click="generate">
         生成草稿
@@ -175,6 +195,13 @@ function toDateStr(d: Date): string {
 .date-row {
   display: flex;
   gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.date-field {
+  flex: 1;
+  min-width: 130px;
 }
 
 .result {
