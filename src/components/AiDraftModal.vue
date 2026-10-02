@@ -101,7 +101,7 @@ function toDateStr(d: Date): string {
 </script>
 
 <template>
-  <n-modal :show="props.show" preset="card" title="AI 行程草稿" style="width: 560px" @update:show="close">
+  <n-modal :show="props.show" preset="card" title="AI 行程草稿" style="width: min(560px, calc(100vw - 32px))" @update:show="close">
     <n-alert type="info" :show-icon="false" class="tip">
       生成结果只是草稿：确认前可预览，确认后只会保存为新旅行，绝不覆盖现有数据。
     </n-alert>

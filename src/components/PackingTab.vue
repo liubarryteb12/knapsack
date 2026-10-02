@@ -164,7 +164,7 @@ async function onGroupAction(key: string, gi: number) {
       <n-button size="small" @click="addGroup">添加分组</n-button>
     </div>
 
-    <n-modal v-model:show="showTemplates" preset="card" title="套用行李模板" style="width: 420px">
+    <n-modal v-model:show="showTemplates" preset="card" title="套用行李模板" style="width: min(420px, calc(100vw - 32px))">
       <p class="muted small">套用 = 追加分组（已有同名分组会跳过）。</p>
       <div class="template-grid">
         <n-button v-for="(tpl, key) in packingTemplates" :key="key" @click="applyTemplate(key)">

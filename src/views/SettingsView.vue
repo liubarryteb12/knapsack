@@ -118,6 +118,12 @@ const hasTrips = computed(() => tripsStore.trips.length > 0)
   margin: 0 auto;
 }
 
+@media (max-width: 720px) {
+  .page {
+    padding: 16px;
+  }
+}
+
 .section {
   margin-bottom: 16px;
 }

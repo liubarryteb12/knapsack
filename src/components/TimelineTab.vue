@@ -260,7 +260,7 @@ async function onRowAction(key: string, index: number) {
       </div>
     </div>
 
-    <n-modal v-model:show="showEdit" preset="card" :title="editingIndex === null ? '添加条目' : '编辑条目'" style="width: 420px">
+    <n-modal v-model:show="showEdit" preset="card" :title="editingIndex === null ? '添加条目' : '编辑条目'" style="width: min(420px, calc(100vw - 32px))">
       <n-form label-placement="left" label-width="60">
         <n-form-item label="类型">
           <n-select v-model:value="editForm.type" :options="itemTypeOptions" />

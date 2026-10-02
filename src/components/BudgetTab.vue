@@ -350,7 +350,7 @@ async function onExpenseAction(key: string, e: Expense) {
     </n-card>
 
     <!-- 记一笔表单 -->
-    <n-modal v-model:show="showEdit" preset="card" :title="editingId ? '编辑花费' : '记一笔'" style="width: 460px">
+    <n-modal v-model:show="showEdit" preset="card" :title="editingId ? '编辑花费' : '记一笔'" style="width: min(460px, calc(100vw - 32px))">
       <n-form label-placement="left" label-width="80">
         <n-form-item label="日期">
           <n-date-picker
@@ -418,7 +418,7 @@ async function onExpenseAction(key: string, e: Expense) {
     </n-modal>
 
     <!-- 成员管理 -->
-    <n-modal v-model:show="showMembers" preset="card" title="成员管理" style="width: 380px">
+    <n-modal v-model:show="showMembers" preset="card" title="成员管理" style="width: min(380px, calc(100vw - 32px))">
       <div class="member-list">
         <div v-for="m in trip.members" :key="m.id" class="member-item">
           <span>{{ m.name }}<span v-if="m.role === 'owner'" class="muted">（发起人）</span></span>

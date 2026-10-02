@@ -34,6 +34,7 @@ import { NConfigProvider, NMessageProvider, zhCN, dateZhCN } from 'naive-ui'
 .app-shell {
   display: flex;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -91,7 +92,50 @@ import { NConfigProvider, NMessageProvider, zhCN, dateZhCN } from 'naive-ui'
 
 .app-main {
   flex: 1;
+  min-height: 0;
   overflow: auto;
   background: #fff;
+}
+
+/* 窄屏（手机 / 安卓 APK）：侧边栏改为底部导航 */
+@media (max-width: 720px) {
+  .app-shell {
+    flex-direction: column-reverse;
+  }
+
+  .app-sidebar {
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-around;
+    border-right: none;
+    border-top: 1px solid #e5e7eb;
+    padding: 4px 8px;
+    padding-bottom: calc(4px + env(safe-area-inset-bottom));
+    gap: 4px;
+  }
+
+  .app-logo {
+    display: none;
+  }
+
+  .app-nav {
+    flex-direction: row;
+    flex: 1;
+    justify-content: space-around;
+    gap: 0;
+  }
+
+  .app-nav-item {
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 20px;
+    font-size: 11px;
+  }
+
+  .app-nav-icon {
+    font-size: 20px;
+  }
 }
 </style>

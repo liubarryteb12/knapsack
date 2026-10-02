@@ -73,4 +73,10 @@ watch(tripId, async () => {
   color: #9ca3af;
   font-size: 13px;
 }
+
+@media (max-width: 720px) {
+  .page {
+    padding: 16px;
+  }
+}
 </style>

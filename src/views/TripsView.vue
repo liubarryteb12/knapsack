@@ -226,7 +226,7 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- 新建旅行 -->
-    <n-modal v-model:show="showCreate" preset="card" title="新建旅行" style="width: 420px">
+    <n-modal v-model:show="showCreate" preset="card" title="新建旅行" style="width: min(420px, calc(100vw - 32px))">
       <n-form label-placement="left" label-width="80">
         <n-form-item label="名称">
           <n-input v-model:value="createForm.name" placeholder="例如：五一杭州行" />
@@ -266,7 +266,7 @@ onBeforeUnmount(() => {
     </n-modal>
 
     <!-- 导入选择：覆盖 or 另存 -->
-    <n-modal v-model:show="showImportChoice" preset="card" title="导入旅行" style="width: 420px">
+    <n-modal v-model:show="showImportChoice" preset="card" title="导入旅行" style="width: min(420px, calc(100vw - 32px))">
       <p>
         识别到旅行：<strong>{{ pendingImport?.name }}</strong>
         （{{ pendingImport?.startDate }} ~ {{ pendingImport?.endDate }}）
@@ -296,11 +296,19 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
   margin-bottom: 20px;
+}
+
+.page-header h1 {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .header-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
@@ -368,5 +376,24 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+@media (max-width: 720px) {
+  .page {
+    padding: 16px;
+  }
+
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .empty {
+    margin-top: 60px;
+  }
+
+  .trip-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
