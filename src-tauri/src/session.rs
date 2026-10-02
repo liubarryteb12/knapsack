@@ -13,7 +13,6 @@
 //! 结构上把「协议处理」(`do_info` / `do_pull` / `do_push`) 与 Tauri 解耦，
 //! 只依赖 `Arc<Mutex<Inner>>`，因此可以直接被单元测试驱动。
 
-use std::net::UdpSocket;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -51,6 +50,8 @@ pub struct SessionInfo {
     pub session_id: String,
     pub trip_id: String,
     pub trip_name: String,
+    /// 本机所有可用的局域网 IPv4（多网卡时前端可让用户切换）
+    pub ip_candidates: Vec<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -122,17 +123,59 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// 取本机在局域网里的 IPv4。
-/// 用一个不会真正发包的 UDP connect 让路由表告诉我们出口地址，离线也能用。
-fn lan_ip() -> String {
-    if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
-        if sock.connect("8.8.8.8:80").is_ok() {
-            if let Ok(addr) = sock.local_addr() {
-                return addr.ip().to_string();
+/// 枚举本机在局域网里可用的 IPv4，按「更像家庭/办公局域网」排序。
+///
+/// 不能只用「UDP connect 看出口地址」那一招：装了代理软件（Clash 等）开了 TUN 模式时，
+/// 默认路由会指向隧道网卡（形如 198.18.0.1），手机根本连不上。
+/// 所以这里枚举所有网卡，排除回环、链路本地(169.254/16)、隧道基准网段(198.18/15)，
+/// 再按私有网段优先级排序。返回全部候选，前端可在多个网卡时让用户切换。
+fn lan_ips() -> Vec<String> {
+    use if_addrs::{IfAddr, get_if_addrs};
+    use std::net::Ipv4Addr;
+
+    fn rank(ip: &Ipv4Addr) -> u8 {
+        let o = ip.octets();
+        if o[0] == 192 && o[1] == 168 {
+            0
+        } else if o[0] == 10 {
+            1
+        } else if o[0] == 172 && (16..=31).contains(&o[1]) {
+            2
+        } else {
+            3
+        }
+    }
+
+    let mut private: Vec<Ipv4Addr> = Vec::new();
+    let mut others: Vec<Ipv4Addr> = Vec::new();
+    if let Ok(ifaces) = get_if_addrs() {
+        for iface in ifaces {
+            let ip = match iface.addr {
+                IfAddr::V4(v4) => v4.ip,
+                IfAddr::V6(_) => continue,
+            };
+            if ip.is_loopback() || ip.is_link_local() || ip.is_unspecified() {
+                continue;
+            }
+            let o = ip.octets();
+            // 代理软件 TUN 网卡常用的基准测试网段，手机到不了
+            if o[0] == 198 && (o[1] == 18 || o[1] == 19) {
+                continue;
+            }
+            if ip.is_private() {
+                private.push(ip);
+            } else {
+                others.push(ip);
             }
         }
     }
-    "127.0.0.1".to_string()
+    private.sort_by_key(rank);
+    others.sort_by_key(rank);
+    private
+        .into_iter()
+        .chain(others)
+        .map(|ip| ip.to_string())
+        .collect()
 }
 
 // ---------- 信封加密 ----------
@@ -321,13 +364,19 @@ pub async fn session_start(app: AppHandle, trip: Value) -> Result<SessionInfo, S
         .set_nonblocking(true)
         .map_err(|e| format!("设置非阻塞失败：{e}"))?;
 
+    let ip_candidates = lan_ips();
+    let ip = ip_candidates
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "127.0.0.1".to_string());
     let info = SessionInfo {
-        ip: lan_ip(),
+        ip,
         port,
         key_b64: URL_SAFE_NO_PAD.encode(&key),
         session_id,
         trip_id,
         trip_name,
+        ip_candidates,
     };
 
     {
@@ -433,6 +482,7 @@ mod tests {
             session_id: "abc123".into(),
             trip_id: trip.get("id").and_then(Value::as_str).unwrap_or("").into(),
             trip_name: trip.get("name").and_then(Value::as_str).unwrap_or("").into(),
+            ip_candidates: vec!["127.0.0.1".into()],
         });
         key
     }
@@ -472,6 +522,22 @@ mod tests {
 
         // 截断
         assert!(decrypt(&key, &msg[..20]).is_err());
+    }
+
+    /// 候选地址里不能出现手机连不上的地址：
+    /// 回环、链路本地(169.254/16)、代理软件 TUN 用的 198.18.0.0/15。
+    #[test]
+    fn lan_ips_excludes_unreachable_ranges() {
+        for s in lan_ips() {
+            let ip: std::net::Ipv4Addr = s.parse().expect("必须是合法 IPv4");
+            assert!(!ip.is_loopback(), "不该出现回环地址 {ip}");
+            assert!(!ip.is_link_local(), "不该出现链路本地地址 {ip}");
+            let o = ip.octets();
+            assert!(
+                !(o[0] == 198 && (o[1] == 18 || o[1] == 19)),
+                "不该出现 TUN 基准网段 {ip}"
+            );
+        }
     }
 
     fn seal_with(key: &[u8], v: &Value) -> Vec<u8> {
@@ -636,5 +702,51 @@ mod tests {
         // 5) 未知路径 → 404
         let (status, _, _) = raw_request(addr, "GET", "/nope", &[]);
         assert_eq!(status, 404);
+    }
+
+    /// 开发联调用：在局域网里起一个真实主机并挂住 10 分钟，
+    /// 方便手机端走真实网络路径验证「扫码 → 拉取 → 回推」。
+    ///
+    /// 运行：cargo test --lib dev_host -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn dev_host() {
+        let (shared, rx) = test_state();
+        let trip = json!({
+            "format": "trip.v1",
+            "id": "devtrip01",
+            "name": "局域网联调",
+            "startDate": "2026-10-02",
+            "endDate": "2026-10-03",
+            "destType": "city",
+            "destCity": "杭州",
+            "totalBudgetFen": 0,
+            "categoryBudgetsFen": {},
+            "members": [],
+            "days": [],
+            "packing": [],
+            "notes": "",
+            "enabledModules": { "expenses": true, "notes": true }
+        });
+        let key = start(&shared, trip);
+
+        let (tx, addr_rx) = std::sync::mpsc::channel();
+        tauri::async_runtime::spawn(async move {
+            let l = tokio::net::TcpListener::bind("0.0.0.0:0").await.unwrap();
+            tx.send(l.local_addr().unwrap()).unwrap();
+            let _ = axum::serve(l, build_router(shared)).await;
+        });
+        let port = addr_rx.recv_timeout(Duration::from_secs(5)).unwrap().port();
+        let candidates = lan_ips();
+        println!("\n===== 行囊局域网会话 · 开发主机已启动 10 分钟 =====");
+        println!("候选地址: {:?}（第一个是首选；手机连不上就换下一个）", candidates);
+        for ip in &candidates {
+            println!("会话码({ip}) : {PROTOCOL}?ip={ip}&port={port}&k={}&s=dev001", URL_SAFE_NO_PAD.encode(&key));
+        }
+        println!("（手机端「局域网会话」→ 粘贴会话码 → 连接）");
+        println!("================================================\n");
+
+        std::thread::sleep(Duration::from_secs(600));
+        println!("dev_host 结束，收到推送 {} 次", rx.lock().unwrap().len());
     }
 }

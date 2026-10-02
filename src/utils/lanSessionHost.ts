@@ -16,6 +16,8 @@ export interface HostSessionInfo {
   sessionId: string
   tripId: string
   tripName: string
+  /** 本机所有可用局域网地址；多网卡（含代理 TUN）时前端可让用户切换 */
+  ipCandidates: string[]
 }
 
 export interface HostSessionStatus {

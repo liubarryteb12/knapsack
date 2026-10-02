@@ -1,26 +1,21 @@
 /**
- * 局域网会话 · 扫码（阶段12）
+ * 局域网会话 · 扫码能力探测（阶段12）
  *
- * 只有 Capacitor 原生端（安卓）能调系统相机；浏览器/桌面端不支持。
- * 动态 import，避免把安卓插件打进桌面与 Web 包。
+ * 用纯 JS 的 html5-qrcode（getUserMedia），不引原生扫码 SDK——
+ * 原生方案会把 Compose + MLKit 拖进来，APK 从 4.6MB 涨到 34MB，
+ * 与本项目「轻量」的核心气质冲突。
  */
 import { Capacitor } from '@capacitor/core'
 
-/** 当前环境能不能扫码 */
+/** 当前环境能不能开摄像头扫码 */
 export function canScan(): boolean {
-  return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android'
+  const hasCamera = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia
+  return hasCamera && Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android'
 }
 
-/** 打开相机扫二维码，返回原始文本；用户取消时抛错 */
-export async function scanJoinCode(): Promise<string> {
-  const mod = await import('@capacitor/barcode-scanner')
-  const res = await mod.CapacitorBarcodeScanner.scanBarcode({
-    hint: mod.CapacitorBarcodeScannerTypeHint.QR_CODE,
-    scanInstructions: '对准主机屏幕上的二维码',
-    scanButton: false,
-    cameraDirection: mod.CapacitorBarcodeScannerCameraDirection.BACK,
-  })
-  const text = res?.ScanResult ?? ''
-  if (!text) throw new Error('没有扫到内容')
-  return text
+/** getUserMedia 需要安全上下文；Capacitor 的 https://localhost 满足 */
+export function scanUnavailableReason(): string {
+  if (!Capacitor.isNativePlatform()) return '只有手机端能扫码，桌面端请用「复制会话码」'
+  if (!navigator.mediaDevices?.getUserMedia) return '当前环境不支持调用摄像头'
+  return ''
 }

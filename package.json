@@ -14,11 +14,11 @@
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",
-    "@capacitor/barcode-scanner": "^3.1.2",
     "@capacitor/cli": "^8.5.2",
     "@capacitor/core": "^8.5.2",
     "@tauri-apps/api": "^2.12.1",
     "dexie": "^4.4.6",
+    "html5-qrcode": "^2.3.8",
     "naive-ui": "^2.45.3",
     "nanoid": "^6.0.1",
     "pinia": "^4.0.3",

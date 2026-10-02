@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { NAlert, NButton, NInput, NModal, NTag, useMessage } from 'naive-ui'
+import { NAlert, NButton, NInput, NModal, NSelect, NTag, useMessage } from 'naive-ui'
 import QRCode from 'qrcode'
 import { useTripsStore } from '../stores/trips'
 import { useHistoryStore } from '../stores/history'
@@ -22,7 +22,8 @@ import {
   onSessionPushed,
   type HostSessionInfo,
 } from '../utils/lanSessionHost'
-import { canScan, scanJoinCode } from '../utils/lanSessionScan'
+import { canScan } from '../utils/lanSessionScan'
+import QrScanner from './QrScanner.vue'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 
 const props = defineProps<{ show: boolean; trip: Trip }>()
@@ -47,22 +48,42 @@ function plain<T>(v: T): T {
 // ---------- 主机侧 ----------
 
 const hosting = ref<HostSessionInfo | null>(null)
+const hostIp = ref('')
 const qrUrl = ref('')
 const starting = ref(false)
 let unlisten: UnlistenFn | null = null
 
-const joinPayload = computed(() => (hosting.value ? buildJoinPayload(hosting.value) : ''))
+const ipOptions = computed(
+  () => hosting.value?.ipCandidates.map((ip) => ({ label: ip, value: ip })) ?? [],
+)
+
+const joinPayload = computed(() =>
+  hosting.value
+    ? buildJoinPayload({
+        ip: hostIp.value || hosting.value.ip,
+        port: hosting.value.port,
+        keyB64: hosting.value.keyB64,
+        sessionId: hosting.value.sessionId,
+      })
+    : '',
+)
+
+async function refreshQr() {
+  if (!hosting.value) return
+  qrUrl.value = await QRCode.toDataURL(joinPayload.value, {
+    width: 300,
+    margin: 1,
+    errorCorrectionLevel: 'M',
+  })
+}
 
 async function startHosting() {
   starting.value = true
   try {
     const info = await startSession(plain(props.trip))
     hosting.value = info
-    qrUrl.value = await QRCode.toDataURL(buildJoinPayload(info), {
-      width: 300,
-      margin: 1,
-      errorCorrectionLevel: 'M',
-    })
+    hostIp.value = info.ip
+    await refreshQr()
     if (!unlisten) unlisten = await onSessionPushed(applyPushedTrip)
     message.success(`会话已开启，等待接入（${info.ip}:${info.port}）`)
   } catch (e) {
@@ -98,6 +119,7 @@ async function stopHosting() {
     /* 会话可能已关，忽略 */
   }
   hosting.value = null
+  hostIp.value = ''
   qrUrl.value = ''
   if (unlisten) {
     unlisten()
@@ -113,6 +135,11 @@ async function copyCode() {
     message.warning('复制失败，请手动长按选中')
   }
 }
+
+// 切换网卡地址后重画二维码
+watch(hostIp, () => {
+  void refreshQr()
+})
 
 // 主机本地改动后把最新副本同步到服务端内存
 watch(
@@ -155,13 +182,20 @@ async function connect(codeText?: string) {
   }
 }
 
+const showScanner = ref(false)
+
 async function doScan() {
-  try {
-    const text = await scanJoinCode()
-    await connect(text)
-  } catch (e) {
-    message.error(`扫码失败：${errText(e)}`)
-  }
+  showScanner.value = true
+}
+
+function onScanned(text: string) {
+  showScanner.value = false
+  void connect(text)
+}
+
+function onScanError(msg: string) {
+  showScanner.value = false
+  message.error(`扫码失败：${msg}（可改用下面的会话码粘贴）`)
 }
 
 async function doPull() {
@@ -202,6 +236,7 @@ watch(
   () => props.show,
   async (open) => {
     if (!open) {
+      showScanner.value = false // 关面板就释放摄像头
       // 关闭面板就关会话，不留后台监听
       if (hosting.value) await stopHosting()
       return
@@ -212,14 +247,12 @@ watch(
       const st = await getSessionStatus()
       if (st.running && st.info) {
         hosting.value = st.info
-        qrUrl.value = await QRCode.toDataURL(buildJoinPayload(st.info), {
-          width: 300,
-          margin: 1,
-          errorCorrectionLevel: 'M',
-        })
+        hostIp.value = st.info.ip
+        await refreshQr()
         if (!unlisten) unlisten = await onSessionPushed(applyPushedTrip)
       } else {
         hosting.value = null
+        hostIp.value = ''
         qrUrl.value = ''
       }
     } catch {
@@ -262,12 +295,26 @@ onBeforeUnmount(() => {
         <div class="host-side">
           <div class="kv">
             <span class="muted">地址</span>
-            <code>{{ hosting.ip }}:{{ hosting.port }}</code>
+            <n-select
+              v-if="ipOptions.length > 1"
+              v-model:value="hostIp"
+              size="small"
+              :options="ipOptions"
+              class="ip-select"
+            />
+            <code v-else>{{ hostIp }}:{{ hosting.port }}</code>
+          </div>
+          <div v-if="ipOptions.length > 1" class="kv">
+            <span class="muted">端口</span>
+            <code>{{ hosting.port }}</code>
           </div>
           <div class="kv">
             <span class="muted">会话号</span>
             <code>{{ hosting.sessionId }}</code>
           </div>
+          <p v-if="ipOptions.length > 1" class="muted small">
+            本机有多个网卡，手机连不上时请切换地址（换地址会重画二维码）。
+          </p>
           <p class="muted small">手机端打开「局域网会话」→ 扫码接入。</p>
           <div class="row">
             <n-button size="small" @click="copyCode">复制会话码</n-button>
@@ -279,8 +326,13 @@ onBeforeUnmount(() => {
 
     <!-- 接入方（手机） -->
     <template v-else>
-      <div class="block">
-        <n-button v-if="canUseScanner" type="primary" :loading="joining" class="scan-btn" @click="doScan">
+      <div v-if="showScanner" class="block">
+        <QrScanner @scanned="onScanned" @error="onScanError" />
+        <n-button size="small" @click="showScanner = false">取消扫码</n-button>
+      </div>
+
+      <div v-else class="block">
+        <n-button v-if="canUseScanner" type="primary" class="scan-btn" @click="doScan">
           扫码加入
         </n-button>
         <n-input
@@ -354,6 +406,10 @@ onBeforeUnmount(() => {
   background: #f3f4f6;
   padding: 2px 6px;
   border-radius: 4px;
+}
+
+.ip-select {
+  min-width: 170px;
 }
 
 .row {
