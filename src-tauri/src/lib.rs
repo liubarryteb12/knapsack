@@ -1,3 +1,7 @@
+mod session;
+
+use tauri::Manager;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -9,8 +13,16 @@ pub fn run() {
             .build(),
         )?;
       }
+      // 局域网会话状态（阶段12）：持有密钥、共享的行程副本与服务句柄
+      app.manage(session::SessionState::new(app.handle().clone()));
       Ok(())
     })
+    .invoke_handler(tauri::generate_handler![
+      session::session_start,
+      session::session_stop,
+      session::session_status,
+      session::session_update_trip,
+    ])
     .run(tauri::generate_context!())
-    .expect("error while building tauri application");
+    .expect("error while running tauri application");
 }
