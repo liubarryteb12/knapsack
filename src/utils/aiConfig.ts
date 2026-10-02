@@ -60,3 +60,29 @@ export async function checkAiReachable(timeoutMs = 4000): Promise<boolean> {
     return false
   }
 }
+
+/**
+ * 拉取模型列表：调 OpenAI 兼容的 /models，返回模型 id 数组。
+ * 不同服务返回结构可能略有差异，这里只认 data[].id（OpenAI 规范）。
+ */
+export async function fetchModelList(
+  config: AiConfig,
+  timeoutMs = 10000,
+): Promise<{ ok: boolean; models: string[]; message: string }> {
+  try {
+    const resp = await fetch(`${config.baseURL.replace(/\/$/, '')}/models`, {
+      headers: { Authorization: `Bearer ${config.apiKey}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+    if (resp.status === 401) return { ok: false, models: [], message: 'API Key 无效（401）' }
+    if (!resp.ok) return { ok: false, models: [], message: `服务返回 ${resp.status}` }
+    const data = (await resp.json()) as { data?: Array<{ id?: unknown }> }
+    const models = (data.data ?? [])
+      .map((m) => m.id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0)
+    if (models.length === 0) return { ok: false, models: [], message: '接口没有返回可用的模型' }
+    return { ok: true, models, message: `已获取 ${models.length} 个模型` }
+  } catch {
+    return { ok: false, models: [], message: '网络不通或地址错误' }
+  }
+}

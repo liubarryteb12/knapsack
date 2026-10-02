@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { NSwitch, NInput, NButton, NCard, NForm, NFormItem, NSelect, NRadioGroup, NRadioButton } from 'naive-ui'
+import { NSwitch, NInput, NButton, NCard, NForm, NFormItem, NSelect, NRadioGroup, NRadioButton, useMessage } from 'naive-ui'
 import { useTripsStore } from '../stores/trips'
 import type { Trip } from '../schema/trip'
-import { loadAiConfig, saveAiConfig, testAiConnection, type AiConfig } from '../utils/aiConfig'
+import { loadAiConfig, saveAiConfig, testAiConnection, fetchModelList, type AiConfig } from '../utils/aiConfig'
 import { useThemeStore, type ThemeMode } from '../stores/theme'
 
 const tripsStore = useTripsStore()
@@ -27,19 +27,52 @@ function toggleModule(trip: Trip, key: 'expenses' | 'notes', value: boolean) {
 const ai = ref<AiConfig>({ baseURL: '', apiKey: '', model: '' })
 const testing = ref(false)
 const testResult = ref('')
+const message = useMessage()
 
-onMounted(() => {
-  ai.value = loadAiConfig()
-})
-
-const modelOptions = [
+/** 内置候选模型；从接口拉到真实列表后会与之合并 */
+const BUILTIN_MODELS = [
   'deepseek-chat',
   'deepseek-reasoner',
   'gpt-4o-mini',
   'gpt-4o',
   'qwen-plus',
   'glm-4-flash',
-].map((m) => ({ label: m, value: m }))
+]
+
+const modelOptions = ref(BUILTIN_MODELS.map((m) => ({ label: m, value: m })))
+const fetchingModels = ref(false)
+
+/** 拉取 /models 并入候选列表。auto 模式（打开设置页时）失败静默，不打扰用户 */
+async function fetchModels(auto = false) {
+  if (!ai.value.baseURL || !ai.value.apiKey) {
+    if (!auto) message.warning('请先填写 Base URL 与 API Key')
+    return
+  }
+  persistAi()
+  fetchingModels.value = true
+  const result = await fetchModelList(ai.value)
+  fetchingModels.value = false
+  if (!result.ok) {
+    if (!auto) message.error(`获取模型列表失败：${result.message}`)
+    return
+  }
+  const merged = [...modelOptions.value]
+  const known = new Set(merged.map((o) => o.value))
+  for (const id of result.models) {
+    if (!known.has(id)) {
+      merged.push({ label: id, value: id })
+      known.add(id)
+    }
+  }
+  modelOptions.value = merged
+  if (!auto) message.success(result.message)
+}
+
+onMounted(() => {
+  ai.value = loadAiConfig()
+  // 配置齐全就自动拉一次，省得手点；失败静默，仍可用「获取列表」重试
+  if (ai.value.baseURL && ai.value.apiKey) void fetchModels(true)
+})
 
 function persistAi() {
   saveAiConfig(ai.value)
@@ -105,13 +138,17 @@ const hasTrips = computed(() => tripsStore.trips.length > 0)
           />
         </n-form-item>
         <n-form-item label="模型名">
-          <n-select
-            v-model:value="ai.model"
-            :options="modelOptions"
-            filterable
-            tag
-            @update:value="persistAi"
-          />
+          <div class="model-row">
+            <n-select
+              v-model:value="ai.model"
+              :options="modelOptions"
+              filterable
+              tag
+              placeholder="选择或直接输入模型名"
+              @update:value="persistAi"
+            />
+            <n-button size="small" :loading="fetchingModels" @click="fetchModels(false)">获取列表</n-button>
+          </div>
         </n-form-item>
       </n-form>
       <div class="test-row">
@@ -169,6 +206,18 @@ const hasTrips = computed(() => tripsStore.trips.length > 0)
   align-items: center;
   gap: 16px;
   flex-wrap: wrap;
+}
+
+.model-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.model-row :deep(.n-select) {
+  flex: 1;
+  min-width: 0;
 }
 
 .appearance-row .small {
