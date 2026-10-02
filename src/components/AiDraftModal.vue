@@ -6,7 +6,7 @@ import {
   NAlert, NSpin, NTag,
 } from 'naive-ui'
 import { useTripsStore } from '../stores/trips'
-import { loadAiConfig } from '../utils/aiConfig'
+import { loadAiConfig, checkAiReachable } from '../utils/aiConfig'
 import { generateDraft, AiError, draftToTrip, type AiDraft } from '../utils/aiDraft'
 import { typeIcon } from './itemMeta'
 import type { TripDay } from '../schema/trip'
@@ -26,10 +26,14 @@ const draftRange = ref<[number, number] | null>(null)
 
 const canGenerate = computed(() => wish.value.trim().length > 0 && range.value !== null && !loading.value)
 
-/** 断网时按钮置灰 */
+/** 断网时按钮置灰：navigator.onLine 在安卓 WebView 不可靠，再补一次真实探活 */
 async function checkOnline(): Promise<boolean> {
   if (!navigator.onLine) {
     message.error('当前离线，AI 生成不可用')
+    return false
+  }
+  if (!(await checkAiReachable())) {
+    message.error('网络不通或 AI 接口不可达，请检查网络与接口设置')
     return false
   }
   return true

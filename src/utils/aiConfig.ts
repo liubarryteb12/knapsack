@@ -39,3 +39,24 @@ export async function testAiConnection(config: AiConfig): Promise<{ ok: boolean;
     return { ok: false, message: '网络不通或地址错误' }
   }
 }
+
+/**
+ * 探测 AI 接口是否真的可达，用于决定「AI 行程草稿」按钮是否置灰。
+ *
+ * 不能用 navigator.onLine：安卓 WebView 在没有任何默认网络时仍返回 true，
+ * 所以这里真发一次请求。只要拿到 HTTP 响应就算可达（401/403 说明网络是通的，
+ * Key 的问题由弹窗单独提示）。
+ */
+export async function checkAiReachable(timeoutMs = 4000): Promise<boolean> {
+  const config = loadAiConfig()
+  try {
+    await fetch(`${config.baseURL.replace(/\/$/, '')}/models`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${config.apiKey}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+    return true
+  } catch {
+    return false
+  }
+}

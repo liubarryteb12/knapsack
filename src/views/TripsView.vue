@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { NButton, NCard, NEmpty, NModal, NForm, NFormItem, NInput, NSelect, NPopconfirm, NDatePicker, useMessage } from 'naive-ui'
 import { useTripsStore } from '../stores/trips'
 import { exportTripFile, readTripFileInput, readTripFile, TripImportError } from '../utils/tripFile'
+import { checkAiReachable } from '../utils/aiConfig'
 import { fenToYuan, yuanToFen } from '../utils/money'
 import { todayStr, addDays, daysBetween, fromDateStr, toDateStr } from '../utils/date'
 import type { DestType, Trip } from '../schema/trip'
@@ -153,20 +154,37 @@ const isEmpty = computed(() => tripsStore.loaded && tripsStore.trips.length === 
 
 // ---- AI 草稿入口 ----
 const showAi = ref(false)
-const aiOnline = ref(navigator.onLine)
+// 不能用 navigator.onLine：安卓 WebView 在无默认网络时仍返回 true，改用真实探活
+const aiOnline = ref(false)
+let aiRetryTimer: ReturnType<typeof setTimeout> | null = null
 
-function updateOnline() {
-  aiOnline.value = navigator.onLine
+async function probeAi() {
+  const reachable = await checkAiReachable()
+  aiOnline.value = reachable
+  if (aiRetryTimer) {
+    clearTimeout(aiRetryTimer)
+    aiRetryTimer = null
+  }
+  // 探活失败就定时重试：安卓 WebView 的 online 事件不一定触发，
+  // 网络恢复后得自己再探一次，否则按钮会一直停在置灰状态
+  if (!reachable) {
+    aiRetryTimer = setTimeout(probeAi, 10000)
+  }
 }
 
 onMounted(() => {
-  window.addEventListener('online', updateOnline)
-  window.addEventListener('offline', updateOnline)
+  probeAi()
+  window.addEventListener('online', probeAi)
+  window.addEventListener('offline', probeAi)
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('online', updateOnline)
-  window.removeEventListener('offline', updateOnline)
+  window.removeEventListener('online', probeAi)
+  window.removeEventListener('offline', probeAi)
+  if (aiRetryTimer) {
+    clearTimeout(aiRetryTimer)
+    aiRetryTimer = null
+  }
 })
 </script>
 
