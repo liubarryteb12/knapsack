@@ -382,7 +382,7 @@ onBeforeUnmount(() => {
   width: 220px;
   height: 220px;
   image-rendering: pixelated;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--app-border);
   border-radius: 8px;
   flex-shrink: 0;
 }
@@ -403,7 +403,7 @@ onBeforeUnmount(() => {
 
 .kv code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  background: #f3f4f6;
+  background: var(--app-chip-bg);
   padding: 2px 6px;
   border-radius: 4px;
 }
@@ -426,7 +426,7 @@ onBeforeUnmount(() => {
 .joined {
   margin-top: 14px;
   padding-top: 12px;
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid var(--app-border);
 }
 
 .scan-btn {
@@ -438,7 +438,7 @@ onBeforeUnmount(() => {
 }
 
 .muted {
-  color: #9ca3af;
+  color: var(--app-muted-soft);
 }
 
 .small {

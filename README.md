@@ -12,6 +12,7 @@
 - 行李清单：城市/海边/山野/通用四套内置模板，自定义分组与条目，打包进度
 - 备忘录：自由文本，停止输入 1 秒自动保存
 - 模块开关：按旅行控制预算/备忘模块显隐
+- 外观：浅色 / 深色 / 跟随系统三档主题，选择只存本机；首屏前置应用主题，深色下不闪白
 - AI 行程草稿（可选）：OpenAI 兼容接口生成行程，Zod 校验 + 失败回喂重试 1 次，预览确认后只能保存为新旅行，绝不覆盖现有数据；断网时按钮置灰
 - 天气（可选）：Open-Meteo 查行程日期内预报，显示在行程页顶部；离线或失败时整个区域静默隐藏
 - 局域网会话（可选）：同一 WiFi 下 PC 当主机、手机扫码接入，AES-256-GCM 加密、整份覆盖式双向同步一份行程，不经过任何服务器
@@ -94,12 +95,12 @@ npx tsx scripts/test-settle.ts   # 结算引擎测试（金额守恒/分摊/贪�
 ### Windows 桌面版（Tauri 2）
 
 ```bash
-npm run tauri build                      # 需 Rust + MSVC 工具链
+npx tauri build                          # 需 Rust + MSVC 工具链
 ```
 
 产物：
 
-- 安装包 `src-tauri/target/release/bundle/nsis/Knapsack_0.1.0_x64-setup.exe`
+- 安装包 `src-tauri/target/release/bundle/nsis/Knapsack_1.0.0_x64-setup.exe`
 - 免安装单文件 `src-tauri/target/release/app.exe`
 
 安装后是独立桌面程序，数据存在本机 IndexedDB，断网全功能可用。

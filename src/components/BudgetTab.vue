@@ -324,7 +324,7 @@ async function onExpenseAction(key: string, e: Expense) {
       </template>
       <input ref="fileInput" type="file" accept=".trip,.json" style="display: none" @change="onMergeFile" />
 
-      <n-empty v-if="trip.expenses.length === 0" description="还没有花费记录" size="small" />
+      <n-empty v-if="trip.expenses.length === 0" description="暂无花费记录" size="small" />
       <div v-for="e in trip.expenses" :key="e.id" class="expense-row">
         <span class="e-date">{{ e.date.slice(5) }}</span>
         <span class="e-cat">{{ expenseCategoryLabel[e.category] }}</span>
@@ -460,12 +460,12 @@ async function onExpenseAction(key: string, e: Expense) {
 
 .remain {
   margin-left: auto;
-  color: #16a34a;
+  color: var(--app-success);
   font-size: 13px;
 }
 
 .remain.over {
-  color: #ef4444;
+  color: var(--app-danger);
 }
 
 .cat-row {
@@ -486,7 +486,7 @@ async function onExpenseAction(key: string, e: Expense) {
 
 .cat-fen {
   font-size: 12px;
-  color: #6b7280;
+  color: var(--app-muted);
   min-width: 110px;
   text-align: right;
 }
@@ -499,8 +499,8 @@ async function onExpenseAction(key: string, e: Expense) {
 }
 
 .member-chip {
-  background: #eef2ff;
-  color: #4338ca;
+  background: var(--app-accent-tint);
+  color: var(--app-accent);
   border-radius: 12px;
   padding: 3px 10px;
   font-size: 13px;
@@ -513,7 +513,7 @@ async function onExpenseAction(key: string, e: Expense) {
   border: none;
   background: none;
   cursor: pointer;
-  color: #818cf8;
+  color: var(--app-accent-light);
   font-size: 14px;
   padding: 0;
 }
@@ -523,21 +523,21 @@ async function onExpenseAction(key: string, e: Expense) {
   align-items: center;
   gap: 8px;
   padding: 6px 0;
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 1px solid var(--app-border-soft);
   font-size: 13px;
 }
 
 .e-date {
-  color: #9ca3af;
+  color: var(--app-muted-soft);
   font-variant-numeric: tabular-nums;
 }
 
 .e-cat {
-  background: #f3f4f6;
+  background: var(--app-chip-bg);
   border-radius: 8px;
   padding: 1px 8px;
   font-size: 12px;
-  color: #6b7280;
+  color: var(--app-muted);
 }
 
 .e-title {
@@ -551,7 +551,7 @@ async function onExpenseAction(key: string, e: Expense) {
 }
 
 .e-payer {
-  color: #9ca3af;
+  color: var(--app-muted-soft);
   font-size: 12px;
 }
 
@@ -566,7 +566,7 @@ async function onExpenseAction(key: string, e: Expense) {
 .debt-amount {
   margin-left: auto;
   font-weight: 700;
-  color: #ef4444;
+  color: var(--app-danger);
   font-variant-numeric: tabular-nums;
 }
 
@@ -595,7 +595,7 @@ async function onExpenseAction(key: string, e: Expense) {
 }
 
 .muted {
-  color: #9ca3af;
+  color: var(--app-muted-soft);
 }
 
 .small {

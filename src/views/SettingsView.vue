@@ -1,11 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { NSwitch, NInput, NButton, NCard, NForm, NFormItem, NSelect } from 'naive-ui'
+import { NSwitch, NInput, NButton, NCard, NForm, NFormItem, NSelect, NRadioGroup, NRadioButton } from 'naive-ui'
 import { useTripsStore } from '../stores/trips'
 import type { Trip } from '../schema/trip'
 import { loadAiConfig, saveAiConfig, testAiConnection, type AiConfig } from '../utils/aiConfig'
+import { useThemeStore, type ThemeMode } from '../stores/theme'
 
 const tripsStore = useTripsStore()
+const themeStore = useThemeStore()
+
+function setTheme(value: ThemeMode) {
+  themeStore.setMode(value)
+}
 
 onMounted(() => {
   tripsStore.load()
@@ -54,6 +60,17 @@ const hasTrips = computed(() => tripsStore.trips.length > 0)
 <template>
   <div class="page">
     <h1>设置</h1>
+
+    <n-card size="small" class="section" title="外观">
+      <div class="appearance-row">
+        <n-radio-group :value="themeStore.mode" size="small" @update:value="setTheme">
+          <n-radio-button value="light">浅色</n-radio-button>
+          <n-radio-button value="dark">深色</n-radio-button>
+          <n-radio-button value="system">跟随系统</n-radio-button>
+        </n-radio-group>
+        <p class="muted small">设置只保存在本机。</p>
+      </div>
+    </n-card>
 
     <n-card size="small" class="section" title="模块开关（按旅行）">
       <p v-if="!hasTrips" class="muted small">还没有旅行计划。开关在各旅行的设置里控制预算/备忘模块的显隐。</p>
@@ -144,7 +161,18 @@ const hasTrips = computed(() => tripsStore.trips.length > 0)
   align-items: center;
   gap: 6px;
   font-size: 13px;
-  color: #6b7280;
+  color: var(--app-muted);
+}
+
+.appearance-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.appearance-row .small {
+  margin-bottom: 0;
 }
 
 .test-row {
@@ -155,11 +183,11 @@ const hasTrips = computed(() => tripsStore.trips.length > 0)
 
 .test-result {
   font-size: 13px;
-  color: #16a34a;
+  color: var(--app-success);
 }
 
 .muted {
-  color: #9ca3af;
+  color: var(--app-muted-soft);
 }
 
 .small {

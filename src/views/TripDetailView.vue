@@ -84,7 +84,7 @@ watch(tripId, async () => {
 }
 
 .muted {
-  color: #9ca3af;
+  color: var(--app-muted-soft);
   font-size: 13px;
 }
 

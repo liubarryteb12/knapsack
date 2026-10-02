@@ -87,7 +87,7 @@ defineExpose({ stop })
 }
 
 .muted {
-  color: #9ca3af;
+  color: var(--app-muted-soft);
 }
 
 .small {

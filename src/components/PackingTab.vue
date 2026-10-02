@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import {
   NButton, NModal, NInput, NCheckbox,
-  NProgress, NEmpty, NDropdown, NPopconfirm,
+  NProgress, NEmpty, NDropdown, NPopconfirm, useMessage,
 } from 'naive-ui'
 import type { Trip, PackingGroup } from '../schema/trip'
 import { nanoid } from 'nanoid'
@@ -11,6 +11,7 @@ import { packingTemplates } from './packingTemplates'
 
 const props = defineProps<{ trip: Trip }>()
 const tripsStore = useTripsStore()
+const message = useMessage()
 
 // ---- 进度 ----
 const totalItems = computed(() => props.trip.packing.reduce((a, g) => a + g.items.length, 0))
@@ -48,7 +49,7 @@ async function addGroup() {
   const name = newGroupName.value.trim()
   if (!name) return
   if (props.trip.packing.some((g) => g.group === name)) {
-    window.alert('已有同名分组')
+    message.error('已有同名分组')
     return
   }
   props.trip.packing.push({ group: name, items: [] })
@@ -56,13 +57,35 @@ async function addGroup() {
   await tripsStore.saveTrip(props.trip)
 }
 
-async function renameGroup(gi: number) {
+// ---- 重命名分组 ----
+const showRename = ref(false)
+const renameIndex = ref<number | null>(null)
+const renameValue = ref('')
+
+function renameGroup(gi: number) {
   const g = props.trip.packing[gi]
   if (!g) return
-  const name = window.prompt('新分组名', g.group)
-  if (!name?.trim()) return
-  g.group = name.trim()
+  renameIndex.value = gi
+  renameValue.value = g.group
+  showRename.value = true
+}
+
+async function submitRename() {
+  const gi = renameIndex.value
+  const g = gi === null ? undefined : props.trip.packing[gi]
+  if (!g) return
+  const name = renameValue.value.trim()
+  if (!name) {
+    message.error('分组名不能为空')
+    return
+  }
+  if (name !== g.group && props.trip.packing.some((x) => x.group === name)) {
+    message.error('已有同名分组')
+    return
+  }
+  g.group = name
   await tripsStore.saveTrip(props.trip)
+  showRename.value = false
 }
 
 async function removeGroup(gi: number) {
@@ -99,7 +122,7 @@ const groupActions = [
 ]
 
 async function onGroupAction(key: string, gi: number) {
-  if (key === 'rename') await renameGroup(gi)
+  if (key === 'rename') renameGroup(gi)
   else if (key === 'delete') await removeGroup(gi)
 }
 </script>
@@ -172,6 +195,16 @@ async function onGroupAction(key: string, gi: number) {
         </n-button>
       </div>
     </n-modal>
+
+    <n-modal v-model:show="showRename" preset="card" title="重命名分组" style="width: min(360px, calc(100vw - 32px))">
+      <n-input v-model:value="renameValue" placeholder="分组名" @keyup.enter="submitRename" />
+      <template #footer>
+        <div class="modal-footer">
+          <n-button @click="showRename = false">取消</n-button>
+          <n-button type="primary" @click="submitRename">保存</n-button>
+        </div>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -196,7 +229,7 @@ async function onGroupAction(key: string, gi: number) {
 
 .progress-text {
   font-size: 13px;
-  color: #6b7280;
+  color: var(--app-muted);
   white-space: nowrap;
 }
 
@@ -212,7 +245,7 @@ async function onGroupAction(key: string, gi: number) {
 }
 
 .group-card {
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--app-border);
   border-radius: 10px;
   padding: 12px;
 }
@@ -239,7 +272,7 @@ async function onGroupAction(key: string, gi: number) {
 
 .packed {
   text-decoration: line-through;
-  color: #9ca3af;
+  color: var(--app-muted-soft);
 }
 
 .add-item-row {
@@ -262,10 +295,16 @@ async function onGroupAction(key: string, gi: number) {
 }
 
 .muted {
-  color: #9ca3af;
+  color: var(--app-muted-soft);
 }
 
 .small {
   font-size: 12px;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 </style>

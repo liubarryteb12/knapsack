@@ -326,7 +326,7 @@ async function onRowAction(key: string, index: number) {
 }
 
 .day-block {
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--app-border);
   border-radius: 10px;
   padding: 12px;
   opacity: 0.55;
@@ -335,8 +335,8 @@ async function onRowAction(key: string, index: number) {
 
 .day-block.active {
   opacity: 1;
-  border-color: #c7d2fe;
-  background: #fafaff;
+  border-color: var(--app-accent-border);
+  background: var(--app-accent-surface);
 }
 
 .day-header {
@@ -347,8 +347,8 @@ async function onRowAction(key: string, index: number) {
 }
 
 .day-badge {
-  background: #4338ca;
-  color: #fff;
+  background: var(--app-accent-solid);
+  color: var(--app-accent-on);
   font-size: 12px;
   border-radius: 6px;
   padding: 1px 7px;
@@ -360,7 +360,7 @@ async function onRowAction(key: string, index: number) {
 }
 
 .day-count {
-  color: #9ca3af;
+  color: var(--app-muted-soft);
   font-size: 12px;
   margin-left: auto;
 }
@@ -376,8 +376,8 @@ async function onRowAction(key: string, index: number) {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: #fff;
-  border: 1px solid #eceef1;
+  background: var(--app-bg);
+  border: 1px solid var(--app-border);
   border-radius: 8px;
   padding: 8px 10px;
   font-size: 14px;
@@ -385,17 +385,17 @@ async function onRowAction(key: string, index: number) {
 
 .item-row.done .item-title {
   text-decoration: line-through;
-  color: #9ca3af;
+  color: var(--app-muted-soft);
 }
 
 .item-row.done .item-time,
 .item-row.done .item-note {
-  color: #d1d5db;
+  color: var(--app-faint);
 }
 
 .item-drag-handle {
   cursor: grab;
-  color: #c0c4cc;
+  color: var(--app-faint);
   letter-spacing: -2px;
   user-select: none;
   font-size: 13px;
@@ -407,7 +407,7 @@ async function onRowAction(key: string, index: number) {
 
 .item-time {
   font-variant-numeric: tabular-nums;
-  color: #6b7280;
+  color: var(--app-muted);
   font-size: 13px;
   min-width: 44px;
 }
@@ -417,7 +417,7 @@ async function onRowAction(key: string, index: number) {
 }
 
 .item-note {
-  color: #9ca3af;
+  color: var(--app-muted-soft);
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -434,7 +434,7 @@ async function onRowAction(key: string, index: number) {
 }
 
 .empty-day {
-  color: #c0c4cc;
+  color: var(--app-faint);
   font-size: 13px;
   text-align: center;
   padding: 8px 0;
@@ -442,7 +442,7 @@ async function onRowAction(key: string, index: number) {
 
 .drag-ghost {
   opacity: 0.4;
-  background: #e0e7ff;
+  background: var(--app-accent-soft);
 }
 
 .modal-footer {

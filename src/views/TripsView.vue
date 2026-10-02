@@ -345,13 +345,13 @@ onBeforeUnmount(() => {
 }
 
 .trip-name:hover {
-  color: #4338ca;
+  color: var(--app-accent);
 }
 
 .dest-type {
   font-size: 12px;
-  color: #6b7280;
-  background: #f3f4f6;
+  color: var(--app-muted);
+  background: var(--app-chip-bg);
   padding: 2px 8px;
   border-radius: 10px;
 }
@@ -364,7 +364,7 @@ onBeforeUnmount(() => {
 }
 
 .muted {
-  color: #9ca3af;
+  color: var(--app-muted-soft);
 }
 
 .budget-line {
@@ -374,14 +374,14 @@ onBeforeUnmount(() => {
 
 .budget-bar {
   height: 6px;
-  background: #e5e7eb;
+  background: var(--app-border);
   border-radius: 3px;
   overflow: hidden;
 }
 
 .budget-bar-inner {
   height: 100%;
-  background: #6366f1;
+  background: var(--app-primary);
   border-radius: 3px;
 }
 

@@ -1,4 +1,69 @@
-/* 全局基础样式 */
+/* 全局基础样式与主题变量 */
+
+:root {
+  /* 表面与描边 */
+  --app-bg: #ffffff;
+  --app-bg-soft: #fafafa;
+  --app-border: #e5e7eb;
+  --app-border-soft: #f3f4f6;
+  /* 文字 */
+  --app-text: #1f2937;
+  --app-text-secondary: #374151;
+  --app-muted: #6b7280;
+  --app-muted-soft: #9ca3af;
+  --app-faint: #c0c4cc;
+  /* 交互态与色块 */
+  --app-chip-bg: #f3f4f6;
+  --app-hover-bg: #eceef1;
+  --app-primary: #6366f1;
+  /* 强调色（靛蓝） */
+  --app-accent: #4338ca;
+  --app-accent-solid: #4338ca;
+  --app-accent-on: #ffffff;
+  --app-accent-soft: #e0e7ff;
+  --app-accent-tint: #eef2ff;
+  --app-accent-border: #c7d2fe;
+  --app-accent-surface: #fafaff;
+  --app-accent-light: #818cf8;
+  /* 语义色 */
+  --app-success: #16a34a;
+  --app-danger: #ef4444;
+  /* 天气条 */
+  --app-weather-border: #e0f2fe;
+  --app-weather-bg: #f0f9ff;
+  --app-weather-text: #64748b;
+  --app-weather-accent: #38bdf8;
+}
+
+[data-theme='dark'] {
+  --app-bg: #18181c;
+  --app-bg-soft: #202024;
+  --app-border: #303038;
+  --app-border-soft: #2a2a30;
+  --app-text: #e6e7ea;
+  --app-text-secondary: #ced1d8;
+  --app-muted: #9aa0aa;
+  --app-muted-soft: #767c86;
+  --app-faint: #5a6068;
+  --app-chip-bg: #2a2a30;
+  --app-hover-bg: #2c2c33;
+  --app-primary: #818cf8;
+  --app-accent: #a5b4fc;
+  --app-accent-solid: #4f46e5;
+  --app-accent-on: #ffffff;
+  --app-accent-soft: #312e81;
+  --app-accent-tint: #26264a;
+  --app-accent-border: #4f46e5;
+  --app-accent-surface: #1e1e2b;
+  --app-accent-light: #818cf8;
+  --app-success: #4ade80;
+  --app-danger: #f87171;
+  --app-weather-border: #1e3a5f;
+  --app-weather-bg: #14263a;
+  --app-weather-text: #94a3b8;
+  --app-weather-accent: #38bdf8;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -15,5 +80,10 @@ body,
     'Segoe UI',
     system-ui,
     sans-serif;
-  color: #1f2937;
+  color: var(--app-text);
+  background: var(--app-bg);
+}
+
+body {
+  transition: background-color 0.2s, color 0.2s;
 }

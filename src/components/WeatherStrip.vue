@@ -35,8 +35,8 @@ onMounted(async () => {
 
 .weather-cell {
   flex-shrink: 0;
-  border: 1px solid #e0f2fe;
-  background: #f0f9ff;
+  border: 1px solid var(--app-weather-border);
+  background: var(--app-weather-bg);
   border-radius: 8px;
   padding: 6px 10px;
   text-align: center;
@@ -45,7 +45,7 @@ onMounted(async () => {
 
 .w-date {
   font-size: 11px;
-  color: #64748b;
+  color: var(--app-weather-text);
 }
 
 .w-icon {
@@ -59,6 +59,6 @@ onMounted(async () => {
 
 .w-rain {
   font-size: 11px;
-  color: #38bdf8;
+  color: var(--app-weather-accent);
 }
 </style>

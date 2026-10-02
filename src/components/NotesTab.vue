@@ -88,12 +88,12 @@ onBeforeUnmount(() => {
 }
 
 .saved-tip {
-  color: #16a34a;
+  color: var(--app-success);
   font-size: 12px;
 }
 
 .muted {
-  color: #9ca3af;
+  color: var(--app-muted-soft);
 }
 
 .small {

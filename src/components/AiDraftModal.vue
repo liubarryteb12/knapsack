@@ -188,7 +188,7 @@ function toDateStr(d: Date): string {
 }
 
 .muted {
-  color: #9ca3af;
+  color: var(--app-muted-soft);
 }
 
 .small {
@@ -203,7 +203,7 @@ function toDateStr(d: Date): string {
 }
 
 .preview-day {
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--app-border);
   border-radius: 8px;
   padding: 8px 10px;
   margin-bottom: 8px;
@@ -224,7 +224,7 @@ function toDateStr(d: Date): string {
 }
 
 .preview-time {
-  color: #6b7280;
+  color: var(--app-muted);
   font-variant-numeric: tabular-nums;
   font-size: 12px;
   min-width: 40px;
@@ -235,7 +235,7 @@ function toDateStr(d: Date): string {
 }
 
 .preview-note {
-  color: #9ca3af;
+  color: var(--app-muted-soft);
   font-size: 12px;
 }
 

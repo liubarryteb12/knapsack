@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import { NConfigProvider, NMessageProvider, zhCN, dateZhCN } from 'naive-ui'
+import { NConfigProvider, NMessageProvider, NGlobalStyle, zhCN, dateZhCN, darkTheme } from 'naive-ui'
+import { useThemeStore } from './stores/theme'
+
+const theme = useThemeStore()
 </script>
 
 <template>
-  <n-config-provider :locale="zhCN" :date-locale="dateZhCN">
+  <n-config-provider :locale="zhCN" :date-locale="dateZhCN" :theme="theme.isDark ? darkTheme : null">
+    <n-global-style />
     <n-message-provider>
       <div class="app-shell">
         <aside class="app-sidebar">
@@ -43,10 +47,11 @@ import { NConfigProvider, NMessageProvider, zhCN, dateZhCN } from 'naive-ui'
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid #e5e7eb;
-  background: #fafafa;
+  border-right: 1px solid var(--app-border);
+  background: var(--app-bg-soft);
   padding: 16px 12px;
   gap: 8px;
+  transition: background-color 0.2s, border-color 0.2s;
 }
 
 .app-logo {
@@ -70,19 +75,19 @@ import { NConfigProvider, NMessageProvider, zhCN, dateZhCN } from 'naive-ui'
   gap: 10px;
   padding: 10px 12px;
   border-radius: 8px;
-  color: #374151;
+  color: var(--app-text-secondary);
   text-decoration: none;
   font-size: 15px;
   transition: background 0.15s;
 }
 
 .app-nav-item:hover {
-  background: #eceef1;
+  background: var(--app-hover-bg);
 }
 
 .app-nav-item.router-link-active {
-  background: #e0e7ff;
-  color: #4338ca;
+  background: var(--app-accent-soft);
+  color: var(--app-accent);
   font-weight: 600;
 }
 
@@ -94,7 +99,8 @@ import { NConfigProvider, NMessageProvider, zhCN, dateZhCN } from 'naive-ui'
   flex: 1;
   min-height: 0;
   overflow: auto;
-  background: #fff;
+  background: var(--app-bg);
+  transition: background-color 0.2s;
 }
 
 /* 窄屏（手机 / 安卓 APK）：侧边栏改为底部导航 */
@@ -109,7 +115,7 @@ import { NConfigProvider, NMessageProvider, zhCN, dateZhCN } from 'naive-ui'
     align-items: center;
     justify-content: space-around;
     border-right: none;
-    border-top: 1px solid #e5e7eb;
+    border-top: 1px solid var(--app-border);
     padding: 4px 8px;
     padding-bottom: calc(4px + env(safe-area-inset-bottom));
     gap: 4px;
