@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { NConfigProvider, NMessageProvider, NGlobalStyle, zhCN, dateZhCN, darkTheme, type GlobalThemeOverrides } from 'naive-ui'
 import { RouterLink, RouterView } from 'vue-router'
-import { Map, Settings, Backpack } from '@lucide/vue'
+import { Map, Settings, Backpack, Users } from '@lucide/vue'
 import { useThemeStore } from './stores/theme'
 
 const theme = useThemeStore()
@@ -34,6 +34,10 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => ({
             <RouterLink class="app-nav-item" to="/" exact-active-class="router-link-active">
               <span class="app-nav-icon"><Map :size="19" :stroke-width="2" /></span>
               <span>旅行</span>
+            </RouterLink>
+            <RouterLink class="app-nav-item" to="/teams" exact-active-class="router-link-active">
+              <span class="app-nav-icon"><Users :size="19" :stroke-width="2" /></span>
+              <span>团队</span>
             </RouterLink>
             <RouterLink class="app-nav-item" to="/settings" exact-active-class="router-link-active">
               <span class="app-nav-icon"><Settings :size="19" :stroke-width="2" /></span>

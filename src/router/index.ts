@@ -6,6 +6,8 @@ const router = createRouter({
   routes: [
     { path: '/', name: 'trips', component: () => import('../views/TripsView.vue') },
     { path: '/trip/:id', name: 'trip-detail', component: () => import('../views/TripDetailView.vue') },
+    { path: '/teams', name: 'teams', component: () => import('../views/TeamsView.vue') },
+    { path: '/team/:id', name: 'team-detail', component: () => import('../views/TeamDetailView.vue') },
     { path: '/settings', name: 'settings', component: () => import('../views/SettingsView.vue') },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],

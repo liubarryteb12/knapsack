@@ -1,0 +1,542 @@
+<script setup lang="ts">
+/**
+ * 主机 · 汇总与确认：待审核报告、缺口总表。
+ * 只有组织者确认后，数量/费用才进入「当前确认量」；未确认不伪装成事实（SPEC 3.4/3.3）。
+ */
+import { computed, ref } from 'vue'
+import { NAlert, NButton, NCard, NInput, NModal, NSelect, NTag, useMessage } from 'naive-ui'
+import { Check, X, FileUp } from '@lucide/vue'
+import { acceptSubmission, decideSubmission } from '../../db/teamActions'
+import { currentConfirmedQty, summarizeAllocation } from '../../team/domain'
+import { confirmKeyString, newId } from '../../team/protocol'
+import { dedupeSubmissions, parseSubmissionFile } from '../../team/teamFile'
+import { pickTextFile } from '../../utils/fileBridge'
+import { fenToYuan } from '../../utils/money'
+import type { TeamState, Submission } from '../../team/schema'
+
+const props = defineProps<{ team: TeamState }>()
+const emit = defineEmits<{ (e: 'changed'): void }>()
+
+const message = useMessage()
+
+const stageLabel: Record<string, string> = {
+  purchase: '采购',
+  carry: '携带',
+  count: '清点',
+}
+
+const pending = computed(() => props.team.submissions.filter((s) => s.review === 'submitted'))
+
+function memberName(memberId: string): string {
+  return props.team.roster.find((m) => m.memberId === memberId)?.name ?? '（已移除成员）'
+}
+
+function itemName(allocationId: string | null): string {
+  if (!allocationId) return '—'
+  const a = props.team.allocations.find((x) => x.allocationId === allocationId)
+  if (!a) return '（已删除批次）'
+  return props.team.items.find((i) => i.itemId === a.itemId)?.name ?? '（已删除物资）'
+}
+
+function checkpointName(checkpointId: string | null): string {
+  if (!checkpointId) return '—'
+  return props.team.checkpoints.find((c) => c.checkpointId === checkpointId)?.name ?? '（已删除节点）'
+}
+
+function describe(s: Submission): string {
+  if (s.amountFen !== null) return `${fenToYuan(s.amountFen)} 元`
+  if (s.qty !== null) return `${s.qty}`
+  return '—'
+}
+
+// ---------- 确认 / 退回 ----------
+
+const rejecting = ref<Submission | null>(null)
+const rejectNote = ref('')
+
+async function confirm(s: Submission) {
+  const organizerId = props.team.myMemberId
+  if (!organizerId) return
+  const res = await decideSubmission({
+    teamId: props.team.teamId,
+    organizerMemberId: organizerId,
+    operationId: `confirm-${s.submissionId}-${s.revision}-${Date.now().toString(36)}`,
+    submissionId: s.submissionId,
+    revision: s.revision,
+    decision: 'confirmed',
+  })
+  if (!res.ok) {
+    message.error(res.error)
+    return
+  }
+  message.success('已确认，进入当前汇总')
+  emit('changed')
+}
+
+function openReject(s: Submission) {
+  rejecting.value = s
+  rejectNote.value = ''
+}
+
+async function submitReject() {
+  const s = rejecting.value
+  const organizerId = props.team.myMemberId
+  if (!s || !organizerId) return
+  const res = await decideSubmission({
+    teamId: props.team.teamId,
+    organizerMemberId: organizerId,
+    operationId: `reject-${s.submissionId}-${s.revision}-${Date.now().toString(36)}`,
+    submissionId: s.submissionId,
+    revision: s.revision,
+    decision: 'rejected',
+    note: rejectNote.value.trim(),
+  })
+  if (!res.ok) {
+    message.error(res.error)
+    return
+  }
+  rejecting.value = null
+  message.success('已退回，成员可修改后重新提交')
+  emit('changed')
+}
+
+// ---------- 导入报告文件（人工核对来源，A32） ----------
+
+interface ImportRow {
+  submission: Submission
+  /** 组织者手动指定的真实作者；空串表示尚未指定 */
+  authorMemberId: string
+}
+
+const showImport = ref(false)
+const importFileName = ref('')
+const importExportedBy = ref('')
+const importRows = ref<ImportRow[]>([])
+const importDuplicates = ref<Submission[]>([])
+const importConflicts = ref<Submission[]>([])
+const importing = ref(false)
+
+const rosterOptions = computed(() =>
+  props.team.roster.map((m) => ({
+    label: m.role === 'organizer' ? `${m.name}（组织者）` : m.name,
+    value: m.memberId,
+  })),
+)
+
+/** 从报告文件里取一条 submission，构造 acceptSubmission 需要的 draft（不含主机填写字段） */
+function draftOf(s: Submission) {
+  return {
+    submissionId: s.submissionId,
+    revision: s.revision,
+    teamId: s.teamId,
+    allocationId: s.allocationId,
+    stage: s.stage,
+    checkpointId: s.checkpointId,
+    taskRevision: s.taskRevision,
+    qty: s.qty,
+    amountFen: s.amountFen,
+    expenseReportId: s.expenseReportId,
+    payerMemberId: s.payerMemberId,
+    relatedAllocationIds: s.relatedAllocationIds,
+    note: s.note,
+  }
+}
+
+async function pickReportFile() {
+  const picked = await pickTextFile('.team-submit,application/json')
+  if (!picked) return
+  try {
+    const file = parseSubmissionFile(picked.text)
+    if (file.teamId !== props.team.teamId) {
+      message.error('这个报告文件属于另一个团队，已拒绝导入')
+      return
+    }
+    const { fresh, duplicates, conflicts } = dedupeSubmissions(file.submissions, props.team.submissions)
+    if (fresh.length === 0 && duplicates.length === 0 && conflicts.length === 0) {
+      message.warning('文件里没有报告')
+      return
+    }
+    importFileName.value = picked.name
+    importExportedBy.value = file.exportedBy || '（未标注）'
+    importRows.value = fresh.map((s) => ({ submission: s, authorMemberId: '' }))
+    importDuplicates.value = duplicates
+    importConflicts.value = conflicts
+    showImport.value = true
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : String(e))
+  }
+}
+
+async function confirmImport() {
+  const rows = importRows.value
+  if (rows.length === 0) {
+    showImport.value = false
+    return
+  }
+  if (rows.some((r) => !r.authorMemberId)) {
+    message.error('请为每条报告指定真实作者后再导入')
+    return
+  }
+  importing.value = true
+  try {
+    let okCount = 0
+    const failed: string[] = []
+    for (const r of rows) {
+      const s = r.submission
+      const res = await acceptSubmission({
+        teamId: props.team.teamId,
+        authorMemberId: r.authorMemberId,
+        operationId: `file-${s.submissionId}-${s.revision}-${newId()}`,
+        draft: draftOf(s),
+      })
+      if (res.ok) okCount++
+      else failed.push(`${s.submissionId.slice(0, 6)}：${res.error}`)
+    }
+    showImport.value = false
+    if (failed.length) message.warning(`导入 ${okCount} 条，${failed.length} 条失败：${failed[0]}`)
+    else message.success(`已导入 ${okCount} 条报告，进入待审核`)
+    emit('changed')
+  } finally {
+    importing.value = false
+  }
+}
+
+// ---------- 缺口总表 ----------
+
+const confirmed = computed(() => currentConfirmedQty(props.team.submissions))
+
+const rows = computed(() =>
+  props.team.allocations.map((a) => {
+    const item = props.team.items.find((i) => i.itemId === a.itemId)
+    const summary = item
+      ? summarizeAllocation(a, item, props.team.checkpoints, confirmed.value)
+      : null
+    return {
+      allocation: a,
+      item,
+      summary,
+      purchase: confirmed.value.get(
+        confirmKeyString({ allocationId: a.allocationId, stage: 'purchase', checkpointId: null }),
+      ),
+      carry: confirmed.value.get(
+        confirmKeyString({ allocationId: a.allocationId, stage: 'carry', checkpointId: null }),
+      ),
+    }
+  }),
+)
+
+function confirmedCount(allocationId: string): Array<{ checkpointId: string; qty: number }> {
+  const out: Array<{ checkpointId: string; qty: number }> = []
+  for (const cp of props.team.checkpoints) {
+    const hit = confirmed.value.get(
+      confirmKeyString({ allocationId, stage: 'count', checkpointId: cp.checkpointId }),
+    )
+    if (hit) out.push({ checkpointId: cp.checkpointId, qty: hit.qty })
+  }
+  return out
+}
+
+function gapOf(allocationId: string, qtyNeeded: number): { gap: number | null; uncounted: boolean } {
+  const counts = confirmedCount(allocationId)
+  const hasPending = props.team.submissions.some(
+    (s) => s.allocationId === allocationId && s.stage === 'count' && s.review !== 'confirmed' && s.review !== 'rejected',
+  )
+  if (counts.length === 0 || hasPending) return { gap: null, uncounted: true }
+  const last = counts[counts.length - 1]!
+  return { gap: Math.max(0, qtyNeeded - last.qty), uncounted: false }
+}
+</script>
+
+<template>
+  <div class="wrap">
+    <!-- 待审核 -->
+    <n-card title="待审核报告" size="small">
+      <template #header-extra>
+        <n-button size="small" @click="pickReportFile">
+          <template #icon><FileUp :size="14" /></template>
+          导入报告文件
+        </n-button>
+      </template>
+      <p v-if="pending.length === 0" class="muted small">暂无待审核报告。</p>
+      <div v-for="s in pending" :key="`${s.submissionId}-${s.revision}`" class="row sub-row">
+        <div class="grow">
+          <div class="sub-head">
+            <strong>{{ memberName(s.authorMemberId) }}</strong>
+            <n-tag size="tiny" :bordered="false">{{ stageLabel[s.stage] ?? s.stage }}</n-tag>
+            <span class="muted small">{{ itemName(s.allocationId) }}</span>
+            <span v-if="s.checkpointId" class="muted small">@ {{ checkpointName(s.checkpointId) }}</span>
+          </div>
+          <div class="sub-body">
+            <span class="num">{{ describe(s) }}</span>
+            <span v-if="s.qty !== null && s.amountFen !== null" class="muted small">（数量 {{ s.qty }}）</span>
+            <span v-if="s.note" class="muted small">备注：{{ s.note }}</span>
+            <span v-if="s.revision > 1" class="muted small">第 {{ s.revision }} 次修订</span>
+          </div>
+        </div>
+        <n-button size="small" type="primary" @click="confirm(s)">
+          <template #icon><Check :size="14" /></template>
+          确认
+        </n-button>
+        <n-button size="small" @click="openReject(s)">
+          <template #icon><X :size="14" /></template>
+          退回
+        </n-button>
+      </div>
+    </n-card>
+
+    <!-- 缺口总表 -->
+    <n-card title="缺口总表" size="small">
+      <p v-if="rows.length === 0" class="muted small">还没有批次，先去「分工设置」添加物资与批次。</p>
+      <table v-else class="table">
+        <thead>
+          <tr>
+            <th>物资 / 批次</th>
+            <th>需求</th>
+            <th>采购确认</th>
+            <th>携带确认</th>
+            <th>清点确认</th>
+            <th>缺口</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="r in rows" :key="r.allocation.allocationId">
+            <td>
+              <strong>{{ r.item?.name ?? '（已删除物资）' }}</strong>
+              <span class="muted small"> / 计划 {{ r.allocation.qtyPlanned }}</span>
+            </td>
+            <td>{{ r.item ? `${r.item.qtyNeeded} ${r.item.unit}` : '—' }}</td>
+            <td>{{ r.purchase ? r.purchase.qty : '—' }}</td>
+            <td>{{ r.carry ? r.carry.qty : '—' }}</td>
+            <td>
+              <template v-if="confirmedCount(r.allocation.allocationId).length">
+                <span
+                  v-for="c in confirmedCount(r.allocation.allocationId)"
+                  :key="c.checkpointId"
+                  class="count-chip"
+                >
+                  {{ checkpointName(c.checkpointId) }}：{{ c.qty }}
+                </span>
+              </template>
+              <span v-else class="muted">未清点</span>
+            </td>
+            <td>
+              <template v-if="r.item">
+                <template v-if="gapOf(r.allocation.allocationId, r.item.qtyNeeded).uncounted">
+                  <n-tag size="tiny" type="warning" :bordered="false">待核对</n-tag>
+                </template>
+                <template v-else>
+                  <n-tag
+                    size="tiny"
+                    :type="(gapOf(r.allocation.allocationId, r.item.qtyNeeded).gap ?? 0) > 0 ? 'error' : 'success'"
+                    :bordered="false"
+                  >
+                    缺 {{ gapOf(r.allocation.allocationId, r.item.qtyNeeded).gap }}
+                  </n-tag>
+                </template>
+              </template>
+              <span v-else>—</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="muted small">
+        缺口按节点单独计算，不跨节点相加；有未确认清点报告时标「待核对」，不伪装成确定缺失。
+      </p>
+    </n-card>
+
+    <!-- 退回原因 -->
+    <n-modal
+      :show="!!rejecting"
+      preset="card"
+      title="退回报告"
+      style="width: min(440px, calc(100vw - 32px))"
+      @update:show="(v: boolean) => { if (!v) rejecting = null }"
+    >
+      <n-input v-model:value="rejectNote" type="textarea" :rows="3" placeholder="说明哪里不对，方便对方修改" />
+      <template #footer>
+        <div class="foot">
+          <n-button @click="rejecting = null">取消</n-button>
+          <n-button type="primary" @click="submitReject">确认退回</n-button>
+        </div>
+      </template>
+    </n-modal>
+
+    <!-- 导入报告文件：人工核对来源并指定作者 -->
+    <n-modal
+      v-model:show="showImport"
+      preset="card"
+      title="导入报告文件"
+      style="width: min(560px, calc(100vw - 32px))"
+    >
+      <n-alert type="warning" :show-icon="false" class="tip">
+        文件不证明身份，下面「导出方」只是对方自报，不能据此自动通过；请逐条指定真实作者。
+      </n-alert>
+      <div class="kv"><span class="muted">来源文件</span><span>{{ importFileName }}</span></div>
+      <div class="kv"><span class="muted">导出方自报</span><span>{{ importExportedBy }}</span></div>
+
+      <template v-if="importRows.length">
+        <div class="section-title">待导入（{{ importRows.length }} 条）</div>
+        <div v-for="(r, i) in importRows" :key="r.submission.submissionId + '-' + r.submission.revision" class="imp-row">
+          <div class="imp-desc">
+            <strong>{{ describe(r.submission) }}</strong>
+            <n-tag size="tiny" :bordered="false">{{ stageLabel[r.submission.stage] ?? r.submission.stage }}</n-tag>
+            <span class="muted small">{{ itemName(r.submission.allocationId) }}</span>
+            <span v-if="r.submission.note" class="muted small">备注：{{ r.submission.note }}</span>
+          </div>
+          <n-select
+            v-model:value="importRows[i]!.authorMemberId"
+            size="small"
+            :options="rosterOptions"
+            placeholder="指定真实作者"
+            class="imp-select"
+          />
+        </div>
+      </template>
+
+      <template v-if="importDuplicates.length">
+        <div class="section-title">已存在（{{ importDuplicates.length }} 条，跳过）</div>
+        <p class="muted small">同 ID 同版本且内容一致，无需重复导入。</p>
+      </template>
+
+      <template v-if="importConflicts.length">
+        <div class="section-title conflict">冲突（{{ importConflicts.length }} 条，不导入）</div>
+        <p class="muted small">同 ID 同版本但内容不一致，请与对方核对后再处理，不会静默覆盖。</p>
+      </template>
+
+      <template #footer>
+        <div class="foot">
+          <n-button @click="showImport = false">取消</n-button>
+          <n-button type="primary" :loading="importing" @click="confirmImport">导入并送审</n-button>
+        </div>
+      </template>
+    </n-modal>
+  </div>
+</template>
+
+<style scoped>
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.sub-row {
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.sub-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.sub-body {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-top: var(--space-1);
+}
+
+.num {
+  font-weight: 600;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--app-border);
+}
+
+.table th {
+  color: var(--app-muted);
+  font-weight: 500;
+}
+
+.count-chip {
+  display: inline-block;
+  margin-right: var(--space-2);
+}
+
+.muted {
+  color: var(--app-muted-soft);
+}
+
+.small {
+  font-size: var(--text-xs);
+}
+
+.foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.kv {
+  display: flex;
+  gap: var(--space-3);
+  padding: 2px 0;
+  font-size: var(--text-sm);
+}
+
+.kv > .muted {
+  min-width: 80px;
+}
+
+.tip {
+  margin-bottom: var(--space-3);
+}
+
+.section-title {
+  margin: var(--space-3) 0 var(--space-2);
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+
+.section-title.conflict {
+  color: var(--app-danger, #d03050);
+}
+
+.imp-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.imp-desc {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.imp-select {
+  width: 160px;
+  flex-shrink: 0;
+}
+</style>
