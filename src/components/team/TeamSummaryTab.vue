@@ -239,6 +239,9 @@ const rows = computed(() =>
       if (hit) counts.push({ checkpointId: cp.checkpointId, qty: hit.qty })
     }
 
+    // 缺口按选定节点算（SPEC 3.3）：默认展示「最后清点的那个节点」，
+    // 但明确带出节点名；多节点时组织者看的是每节点的 gapByCheckpoint，
+    // 不再把数组顺序当语义。
     const hasPending = props.team.submissions.some(
       (s) =>
         s.allocationId === a.allocationId &&
@@ -246,17 +249,21 @@ const rows = computed(() =>
         s.review !== 'confirmed' &&
         s.review !== 'rejected',
     )
-    const last = counts.length > 0 ? counts[counts.length - 1]! : null
-    const gap =
-      item && last && !hasPending ? Math.max(0, item.qtyNeeded - last.qty) : null
-    const uncounted = hasPending || counts.length === 0
+    const gapRows = (summary?.gapByCheckpoint ?? []).map((g) => ({
+      ...g,
+      name: props.team.checkpoints.find((c) => c.checkpointId === g.checkpointId)?.name ?? g.checkpointId,
+    }))
+    const lastGap = gapRows.length > 0 ? gapRows[gapRows.length - 1]! : null
+    const uncounted = hasPending || gapRows.length === 0
 
     return {
       allocation: a,
       item,
       summary,
       counts,
-      gap,
+      gapRows,
+      gapCheckpointName: lastGap?.name ?? null,
+      gap: lastGap?.gap ?? null,
       uncounted,
       purchase: confirmed.value.get(
         confirmKeyString({ allocationId: a.allocationId, stage: 'purchase', checkpointId: null }),
@@ -352,7 +359,7 @@ const rows = computed(() =>
                     :type="(r.gap ?? 0) > 0 ? 'error' : 'success'"
                     :bordered="false"
                   >
-                    缺 {{ r.gap }}
+                    缺 {{ r.gap }}<span v-if="r.gapCheckpointName" class="muted"> @{{ r.gapCheckpointName }}</span>
                   </n-tag>
                 </template>
               </template>

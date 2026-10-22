@@ -132,14 +132,16 @@ export async function acceptSubmission(
   const payloadDigest = digestOf({ ...draft, authorMemberId: input.authorMemberId })
   const key = idempotencyKey(input.teamId, input.authorMemberId, 'submission.submit', input.operationId)
 
-  const outcome = await checkIdempotent<AcceptSubmissionResult>(key, payloadDigest)
-  if (outcome.kind === 'replay') return { ...outcome.result, replayed: true }
-  if (outcome.kind === 'conflict') {
-    return { ok: false, error: '同 operationId 但内容不同，疑似重放冲突', conflict: true }
-  }
 
   try {
     const result = await db.transaction('rw', db.teamState, db.teamIdempotency, async () => {
+      // 幂等检查必须在事务内（与 publishSnapshot/acceptReceipt 同理）：
+      // 事务外检查挡不住并发，两个请求都会判定「新动作」各跑一遍业务。
+      const outcome = await inTxIdempotent<AcceptSubmissionResult>(key, payloadDigest)
+      if (outcome.kind === 'replay') return { ...outcome.result, replayed: true }
+      if (outcome.kind === 'conflict') {
+        return { ok: false as const, error: '同 operationId 但内容不同，疑似重放冲突', conflict: true }
+      }
       const team = await db.teamState.get(input.teamId)
       if (!team) throw new Error('团队不存在')
       const parsed = teamStateSchema.parse(team)
@@ -200,10 +202,16 @@ export async function acceptSubmission(
           : '',
         reviewedAt: null,
       })
+      // SPEC 3.4：修改提交新 revision，保留旧版本；新 revision 不自动覆盖旧确认。
+      // 旧实现直接 map 替换同 submissionId 的行——旧 revision 与其确认状态
+      // 被物理删除，已确认的 20 元在成员提交修订的瞬间就消失。
+      // 现在按 (submissionId, revision) 追加成独立行：旧行原样保留
+      // （confirmed 继续算数），新行以待审进入；组织者确认新版时，
+      // decideSubmission 的同 expenseReportId 降级把旧版切为 stale，
+      // 当前来源才真正切换。组织者界面上旧确认旁会看到「有待审核更新」。
       const nextSubs = existing
-        ? parsed.submissions.map((s) => (s.submissionId === submission.submissionId ? submission : s))
+        ? [...parsed.submissions, submission]
         : [...parsed.submissions, submission]
-
       const updated: TeamState = { ...parsed, submissions: nextSubs, updatedAt: Date.now() }
       await db.teamState.put(updated)
 
@@ -256,12 +264,13 @@ export async function decideSubmission(input: ConfirmDecisionInput): Promise<Con
     note: input.note ?? '',
   })
   const key = idempotencyKey(input.teamId, input.organizerMemberId, 'confirm.decision', input.operationId)
-  const outcome = await checkIdempotent<ConfirmDecisionResult>(key, payloadDigest)
-  if (outcome.kind === 'replay') return outcome.result
-  if (outcome.kind === 'conflict') return { ok: false, error: '同 operationId 但内容不同' }
 
   try {
     return await db.transaction('rw', db.teamState, db.teamIdempotency, async () => {
+      // 幂等检查必须在事务内（同 acceptSubmission）：
+      const outcome = await inTxIdempotent<ConfirmDecisionResult>(key, payloadDigest)
+      if (outcome.kind === 'replay') return outcome.result
+      if (outcome.kind === 'conflict') throw new Error('同 operationId 但内容不同')
       const team = await db.teamState.get(input.teamId)
       if (!team) throw new Error('团队不存在')
       const parsed = teamStateSchema.parse(team)

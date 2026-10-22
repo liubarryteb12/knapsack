@@ -924,6 +924,101 @@ async function testOrganizerRemote() {
   const state = await getTeam(t.teamId)
   check('主机状态含 credentialSecret（本机）', !!state!.credentialSecret)
 }
+// ---------- 审核修复回归：事务内幂等（submission/decision）+ 修订保留历史 + 缺口节点 ----------
+
+async function testAuditFixes() {
+  console.log('审核修复回归')
+
+  // (1) 并发同 operationId 提交报告 → 只收一条（事务内幂等）
+  {
+    const { createTeam, acceptSubmission, getTeam } = await import('../src/db/teamActions')
+    const t = await createTeam({ name: '并发提交团', organizerName: '甲' })
+    const org = t.roster.find((m) => m.role === 'organizer')!.memberId
+    const draft = {
+      submissionId: 'CC', revision: 1, teamId: t.teamId, allocationId: 'a1',
+      stage: 'purchase' as const, checkpointId: null, taskRevision: t.draftRevision,
+      qty: 20, amountFen: null, expenseReportId: null, payerMemberId: null,
+      relatedAllocationIds: ['a1'], note: '',
+    }
+    const [a, b] = await Promise.all([
+      acceptSubmission({ teamId: t.teamId, authorMemberId: org, operationId: 'cc-op', draft }),
+      acceptSubmission({ teamId: t.teamId, authorMemberId: org, operationId: 'cc-op', draft }),
+    ])
+    const after = await getTeam(t.teamId)
+    check('并发同 operationId 提交只落一条', after!.submissions.filter((s) => s.submissionId === 'CC').length === 1)
+    check('其中一个命中重放', (a.ok ? 1 : 0) + (b.ok ? 1 : 0) === 2)
+  }
+
+  // (2) 修订保留旧版本：旧确认继续算数，新版待审
+  {
+    const { createTeam, saveTeam, acceptSubmission, getTeam } = await import('../src/db/teamActions')
+    const { currentConfirmedQty } = await import('../src/team/domain')
+    const { confirmKeyString } = await import('../src/team/protocol')
+    const base = await createTeam({ name: '修订历史团', organizerName: '甲' })
+    const org = base.roster.find((m) => m.role === 'organizer')!.memberId
+    const t = await saveTeam({
+      ...base,
+      items: [{ itemId: 'i1', name: '水', category: 'food', qtyNeeded: 24, unit: '瓶', note: '' }],
+      allocations: [{ allocationId: 'a1', itemId: 'i1', qtyPlanned: 24, purchaseBy: org, carryBy: null, note: '' }],
+    })
+    const mk = (sid: string, rev: number, qty: number) => ({
+      submissionId: sid, revision: rev, teamId: t.teamId, allocationId: 'a1',
+      stage: 'purchase' as const, checkpointId: null, taskRevision: t.draftRevision,
+      qty, amountFen: null, expenseReportId: null, payerMemberId: null,
+      relatedAllocationIds: ['a1'], note: '',
+    })
+    // r1 提交并确认 20
+    await acceptSubmission({ teamId: t.teamId, authorMemberId: org, operationId: 'h-1', draft: mk('H1', 1, 20) })
+    const { decideSubmission } = await import('../src/db/teamActions')
+    await decideSubmission({ teamId: t.teamId, organizerMemberId: org, operationId: 'h-d1', submissionId: 'H1', revision: 1, decision: 'confirmed' })
+    const k = confirmKeyString({ allocationId: 'a1', stage: 'purchase', checkpointId: null })
+    let cur = await getTeam(t.teamId)
+    check('修订前确认量 20', currentConfirmedQty(cur!.submissions).get(k)?.qty === 20)
+
+    // r2 提交修订 24（未确认）
+    await acceptSubmission({ teamId: t.teamId, authorMemberId: org, operationId: 'h-2', draft: mk('H1', 2, 24) })
+    cur = await getTeam(t.teamId)
+    const rows = cur!.submissions.filter((s) => s.submissionId === 'H1')
+    check('修订后两行都在（历史保留）', rows.length === 2)
+    check('旧版仍是 confirmed', rows.find((s) => s.revision === 1)!.review === 'confirmed')
+    check('新版是 submitted', rows.find((s) => s.revision === 2)!.review === 'submitted')
+    check('旧确认继续算数（20 不消失）', currentConfirmedQty(cur!.submissions).get(k)?.qty === 20)
+
+    // 确认新版 → 来源切换到 24
+    await decideSubmission({ teamId: t.teamId, organizerMemberId: org, operationId: 'h-d2', submissionId: 'H1', revision: 2, decision: 'confirmed' })
+    cur = await getTeam(t.teamId)
+    check('确认新版后当前量 24', currentConfirmedQty(cur!.submissions).get(k)?.qty === 24)
+    check('旧版被降级 stale', cur!.submissions.find((s) => s.revision === 1)!.review === 'stale')
+  }
+
+  // (3) 并发同 operationId 确认 → 幂等
+  {
+    const { createTeam, saveTeam, acceptSubmission, decideSubmission, getTeam } = await import('../src/db/teamActions')
+    const base = await createTeam({ name: '并发确认团', organizerName: '甲' })
+    const org = base.roster.find((m) => m.role === 'organizer')!.memberId
+    const t = await saveTeam({
+      ...base,
+      items: [{ itemId: 'i1', name: '水', category: 'food', qtyNeeded: 24, unit: '瓶', note: '' }],
+      allocations: [{ allocationId: 'a1', itemId: 'i1', qtyPlanned: 24, purchaseBy: org, carryBy: null, note: '' }],
+    })
+    await acceptSubmission({
+      teamId: t.teamId, authorMemberId: org, operationId: 'pc-1',
+      draft: {
+        submissionId: 'PC1', revision: 1, teamId: t.teamId, allocationId: 'a1',
+        stage: 'purchase', checkpointId: null, taskRevision: t.draftRevision,
+        qty: 20, amountFen: null, expenseReportId: null, payerMemberId: null,
+        relatedAllocationIds: ['a1'], note: '',
+      },
+    })
+    const [x, y] = await Promise.all([
+      decideSubmission({ teamId: t.teamId, organizerMemberId: org, operationId: 'pc-op', submissionId: 'PC1', revision: 1, decision: 'confirmed' }),
+      decideSubmission({ teamId: t.teamId, organizerMemberId: org, operationId: 'pc-op', submissionId: 'PC1', revision: 1, decision: 'confirmed' }),
+    ])
+    check('并发同 operationId 确认幂等', x.ok && y.ok)
+    const after = await getTeam(t.teamId)
+    check('确认结果一致', after!.submissions[0]!.review === 'confirmed')
+  }
+}
 async function main() {
   await testA01()
   await testA12_A13()
@@ -937,6 +1032,7 @@ async function main() {
   await testP0Regressions()
   await testSaveTeamConcurrency()
   await testOrganizerRemote()
+  await testAuditFixes()
   await testA34ProxyToPlain()
   if (failed > 0) {
     console.error(`\n${failed} 项失败`)
