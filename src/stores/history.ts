@@ -45,8 +45,20 @@ export const useHistoryStore = defineStore('history', {
       const idx = findLastIndex(this.undoStack, (s) => s.tripId === tripId)
       if (idx < 0) return null
       const snapshot = this.undoStack.splice(idx, 1)[0]!
-      this.redoStack.push(snapshot)
       const tripsStore = useTripsStore()
+
+      // redo 要恢复的是「undo 之前那一版」，所以必须先取当前状态再回退。
+      // 旧实现把 undo 弹出的快照本身推入 redoStack——那个快照就是 undo 后的
+      // 当前状态，redo 时再写回它等于什么都没做，用户撤销的编辑永久找不回来。
+      const current = tripsStore.trips.find((t) => t.id === tripId)
+      if (current) {
+        this.redoStack.push({
+          tripId,
+          data: JSON.stringify(current),
+          label: snapshot.label,
+        })
+      }
+
       await tripsStore.saveTrip(JSON.parse(snapshot.data))
       return snapshot.label
     },
@@ -55,8 +67,18 @@ export const useHistoryStore = defineStore('history', {
       const idx = findLastIndex(this.redoStack, (s) => s.tripId === tripId)
       if (idx < 0) return null
       const snapshot = this.redoStack.splice(idx, 1)[0]!
-      this.undoStack.push(snapshot)
       const tripsStore = useTripsStore()
+
+      // 对称处理：把当前状态压回 undoStack，用户才能再次 undo
+      const current = tripsStore.trips.find((t) => t.id === tripId)
+      if (current) {
+        this.undoStack.push({
+          tripId,
+          data: JSON.stringify(current),
+          label: snapshot.label,
+        })
+      }
+
       await tripsStore.saveTrip(JSON.parse(snapshot.data))
       return snapshot.label
     },

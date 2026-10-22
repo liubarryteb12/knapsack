@@ -19,6 +19,8 @@ import type {
 import {
   teamStateSchema,
   publicationMetaSchema,
+  submissionSchema,
+  publicSnapshotSchema,
 } from '../team/schema'
 import { digestOf, buildPublicSnapshot } from '../team/domain'
 import { newId, confirmKeyString, isConsistentKey } from '../team/protocol'
@@ -72,8 +74,29 @@ export type IdempotentOutcome<T> =
   | { kind: 'replay'; result: T }
   | { kind: 'conflict' }
 
-/** 查幂等记录（不入事务；事务内请用 ensureIdempotent 的变体） */
+/** 查幂等记录（仅供事务外调用；事务内必须用 inTxIdempotent） */
 export async function checkIdempotent<T>(
+  key: string,
+  payloadDigest: string,
+): Promise<IdempotentOutcome<T>> {
+  const rec = await db.teamIdempotency.get(key)
+  if (!rec) return { kind: 'new' }
+  if (rec.payloadDigest !== payloadDigest) return { kind: 'conflict' }
+  return { kind: 'replay', result: rec.result as T }
+}
+
+/**
+ * 事务内幂等检查。
+ *
+ * 为什么必须在事务内：Dexie 的 'rw' 事务对涉及的表是串行的，但两个并发请求
+ * 各自的事务是先后进入的。如果幂等检查放在事务外，两个请求都会读到「没有记录」
+ * 然后各跑一遍业务——发布场景下就是同一个 operationId 发出两个版本
+ * （实测复现：并发 Promise.all 两个 publishSnapshot，得到 version 1 和 2，
+ * publicationId 还不同），直接违反 SPEC 4.2「同 operationId 重试返回原版」。
+ *
+ * 放进事务后，第二个请求能看到第一个已提交的幂等记录，从而短路返回原结果。
+ */
+async function inTxIdempotent<T>(
   key: string,
   payloadDigest: string,
 ): Promise<IdempotentOutcome<T>> {
@@ -158,15 +181,23 @@ export async function acceptSubmission(
         }
       }
 
-      const submission: Submission = {
+      // 网络传来的 draft 必须先过 schema 再入库。之前是直接展开写进聚合根，
+      // 一个畸形载荷（revision 是字符串、qty 是负数、缺字段）就能把整个
+      // TeamState 毒化——此后每次 getTeam/事务都会 teamStateSchema.parse 抛错，
+      // 主机再也读不了这个团队。校验失败必须拒绝，不落库。
+      // 注意：uploadedAt/review/reviewNote/reviewedAt 由主机填写，先补齐再过 schema。
+      const outdated = draft.taskRevision < parsed.draftRevision
+      const submission: Submission = submissionSchema.parse({
         ...draft,
         teamId: input.teamId,
         authorMemberId: input.authorMemberId,
         uploadedAt: Date.now(),
-        review: 'submitted',
-        reviewNote: '',
+        review: outdated ? 'stale' : 'submitted',
+        reviewNote: outdated
+          ? `依据的分工版本 ${draft.taskRevision} 已过期（当前 ${parsed.draftRevision}），请领取新版后重新上报`
+          : '',
         reviewedAt: null,
-      }
+      })
       const nextSubs = existing
         ? parsed.submissions.map((s) => (s.submissionId === submission.submissionId ? submission : s))
         : [...parsed.submissions, submission]
@@ -380,15 +411,18 @@ export async function publishSnapshot(input: PublishInput): Promise<PublishResul
   // 幂等载荷：expectedDraftRevision 是业务的一部分
   const payloadDigest = digestOf({ expectedDraftRevision: input.expectedDraftRevision })
   const key = idempotencyKey(input.teamId, input.organizerMemberId, 'publication.publish', input.operationId)
-  const outcome = await checkIdempotent<PublishResult>(key, payloadDigest)
-  if (outcome.kind === 'replay') {
-    // 重试返回原版，不再增版（A13）
-    return outcome.result
-  }
-  if (outcome.kind === 'conflict') return { ok: false, error: '同 operationId 但内容不同' }
 
   try {
     return await db.transaction('rw', db.teamState, db.teamPublications, db.teamIdempotency, async () => {
+      // 幂等检查必须在事务内：两个并发请求带同一 operationId 时，
+      // 事务外检查会让双方都判定「新动作」，从而各自发一版（实测复现）。
+      const outcome = await inTxIdempotent<PublishResult>(key, payloadDigest)
+      if (outcome.kind === 'replay') {
+        // 重试返回原版，不再增版（A13）
+        return outcome.result
+      }
+      if (outcome.kind === 'conflict') throw new Error('同 operationId 但内容不同')
+
       const team = await db.teamState.get(input.teamId)
       if (!team) throw new Error('团队不存在')
       const parsed = teamStateSchema.parse(team)
@@ -476,7 +510,17 @@ export type IngestResult =
  * 事务成功后调用方才把回执发出去；失败则什么都不发生（A25）。
  */
 export async function ingestPublication(input: IngestPublicationInput): Promise<IngestResult> {
-  const snap = toPlain(input.snapshot)
+  const plain = toPlain(input.snapshot)
+
+  // 快照必须过 schema，且 digest 要重算后与自报值比对。
+  // 之前只信对方自报的 snap.digest：一份携带自洽假摘要的快照会被当成
+  // 「同一份」接受，成员端「同 publicationId 不同内容」的冲突判定直接失效；
+  // 畸形快照也会入库污染团队视图。
+  const snap = publicSnapshotSchema.parse(plain)
+  const recomputed = digestOf({ ...snap, digest: '' })
+  if (recomputed !== snap.digest) {
+    return { ok: false, error: '快照校验和不一致，可能已损坏或被篡改' }
+  }
   if (snap.teamId !== input.teamId) return { ok: false, error: '快照 teamId 不匹配' }
 
   try {
@@ -600,12 +644,23 @@ export async function acceptReceipt(input: ReceiptInput): Promise<ReceiptResult>
     version: input.version,
   })
   const key = idempotencyKey(input.teamId, input.memberId, 'receipt.submit', input.operationId)
-  const outcome = await checkIdempotent<ReceiptResult>(key, payloadDigest)
-  if (outcome.kind === 'replay') return outcome.result
-  if (outcome.kind === 'conflict') return { ok: false, error: '同 operationId 但内容不同' }
 
   try {
-    return await db.transaction('rw', db.teamState, db.teamIdempotency, async () => {
+    return await db.transaction('rw', db.teamState, db.teamPublications, db.teamIdempotency, async () => {
+      const outcome = await inTxIdempotent<ReceiptResult>(key, payloadDigest)
+      if (outcome.kind === 'replay') return outcome.result
+      if (outcome.kind === 'conflict') throw new Error('同 operationId 但内容不同')
+
+      // 回执必须指向真实存在的发布版本。之前不校验，成员提交一个
+      // version=999999 + 不存在的 publicationId 就能让主机永久显示
+      // 「已领取第 999999 版」，且因单调递增再也纠正不回来。
+      const pub = await db.teamPublications.get(input.publicationId)
+      if (!pub) throw new Error('回执指向的发布版本不存在')
+      if (pub.meta.teamId !== input.teamId) throw new Error('回执指向的发布版本不属于这个团队')
+      if (pub.meta.version !== input.version) {
+        throw new Error(`回执版本号与发布记录不一致（记录为第 ${pub.meta.version} 版）`)
+      }
+
       const team = await db.teamState.get(input.teamId)
       if (!team) throw new Error('团队不存在')
 

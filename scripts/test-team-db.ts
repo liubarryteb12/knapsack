@@ -7,6 +7,7 @@
  * 以及 A01（旧 trips 数据升级保留）。
  */
 import 'fake-indexeddb/auto'
+import { digestOf } from '../src/team/domain'
 import { types as utilTypes } from 'node:util'
 import { KnapsackDB } from '../src/db/index'
 import { teamStateSchema, type TeamState } from '../src/team/schema'
@@ -203,6 +204,9 @@ async function testSubmissionReceipt() {
   // 模拟成员设备首次领取：成员机上从未见过该发布，用成员侧视角的 publicationId
   // （测试中主机/成员共用同一 DB，故换 ID 走「新领取」分支）
   const memberSnap1: PublicSnapshot = { ...(snap1 as PublicSnapshot), publicationId: 'member-pub-1' }
+  // 改了 publicationId 必须重算 digest：ingestPublication 现在会重算并比对，
+  // 不自洽的快照会被拒（这正是要防的「假摘要」）。
+  memberSnap1.digest = digestOf({ ...memberSnap1, digest: '' })
   const g1 = await ingestPublication({
     teamId, memberId: member,
     snapshot: memberSnap1,
@@ -248,6 +252,7 @@ async function testSubmissionReceipt() {
   // 单调性由 max(历史, 新版本) 保证。下面领 v2、发 v2 回执后再验旧回执不降级。
   const snap2 = await latestPublicationOf(teamId)
   const memberSnap2: PublicSnapshot = { ...(snap2 as PublicSnapshot), publicationId: 'member-pub-2' }
+  memberSnap2.digest = digestOf({ ...memberSnap2, digest: '' })
   const g4 = await ingestPublication({ teamId, memberId: member, snapshot: memberSnap2, operationId: 'op-r2' })
   check('领取 v2', g4.ok && g4.version === 2)
   const r3 = await acceptReceipt({ teamId, memberId: member, operationId: 'op-r2', publicationId: memberSnap2.publicationId, version: 2 })
@@ -733,6 +738,95 @@ async function testTeamListProjection() {
   const rowJson = JSON.stringify(row).length
   check('投影序列化后不大于完整版', rowJson <= fullJson)
 }
+// ---------- P0 修复回归：并发幂等 / 载荷毒化 / 旧版报告 / 假回执 / 假摘要 ----------
+
+async function testP0Regressions() {
+  console.log('P0 修复回归')
+
+  // (1) 同一 operationId 并发发布 -> 只发一版
+  {
+    const { createTeam, publishSnapshot, getTeam } = await import('../src/db/teamActions')
+    const t = await createTeam({ name: '并发团', organizerName: '甲' })
+    const org = t.roster.find((m) => m.role === 'organizer')!.memberId
+    const opId = 'concurrent-op'
+    const [a, b] = await Promise.all([
+      publishSnapshot({ teamId: t.teamId, organizerMemberId: org, operationId: opId, expectedDraftRevision: t.draftRevision }),
+      publishSnapshot({ teamId: t.teamId, organizerMemberId: org, operationId: opId, expectedDraftRevision: t.draftRevision }),
+    ])
+    const after = await getTeam(t.teamId)
+    check('并发同 operationId 只发一版', after!.publicationHistory.length === 1)
+    check('两个请求返回同一 publicationId', a.ok && b.ok && a.publicationId === b.publicationId)
+  }
+
+  // (2) 畸形载荷不得毒化聚合根
+  {
+    const { createTeam, acceptSubmission, getTeam } = await import('../src/db/teamActions')
+    const t = await createTeam({ name: '毒化团', organizerName: '甲' })
+    const org = t.roster.find((m) => m.role === 'organizer')!.memberId
+    const bad = await acceptSubmission({
+      teamId: t.teamId, authorMemberId: org, operationId: 'bad-op',
+      draft: {
+        submissionId: 'BAD', revision: 'NOT_A_NUMBER' as never, teamId: t.teamId,
+        allocationId: 'a1', stage: 'purchase', checkpointId: null, taskRevision: 1,
+        qty: -999 as never, amountFen: null, expenseReportId: null, payerMemberId: null,
+        relatedAllocationIds: [], note: '',
+      },
+    })
+    check('畸形载荷被拒绝', !bad.ok)
+    let readable = true
+    try { await getTeam(t.teamId) } catch { readable = false }
+    check('聚合根仍可读（未被毒化）', readable)
+  }
+
+  // (3) 依据旧版分工的报告 -> stale，不进待审核
+  {
+    const { createTeam, saveTeam, acceptSubmission, getTeam } = await import('../src/db/teamActions')
+    const base = await createTeam({ name: '旧版团', organizerName: '甲' })
+    const org = base.roster.find((m) => m.role === 'organizer')!.memberId
+    const t = await saveTeam({ ...base, draftRevision: 5 })
+    const r = await acceptSubmission({
+      teamId: t.teamId, authorMemberId: org, operationId: 'old-op',
+      draft: {
+        submissionId: 'OLD', revision: 1, teamId: t.teamId, allocationId: 'a1',
+        stage: 'purchase', checkpointId: null, taskRevision: 1, qty: 20,
+        amountFen: null, expenseReportId: null, payerMemberId: null,
+        relatedAllocationIds: ['a1'], note: '',
+      },
+    })
+    check('旧版报告仍能接收（不丢数据）', r.ok)
+    const after = await getTeam(t.teamId)
+    check('旧版报告落为 stale 而非 submitted', after!.submissions[0]!.review === 'stale')
+    check('stale 备注说明原因', after!.submissions[0]!.reviewNote.includes('已过期'))
+  }
+
+  // (4) 假回执被拒
+  {
+    const { createTeam, acceptReceipt } = await import('../src/db/teamActions')
+    const t = await createTeam({ name: '假回执团', organizerName: '甲' })
+    const r = await acceptReceipt({
+      teamId: t.teamId, memberId: 'm2', operationId: 'fake-receipt',
+      publicationId: '不存在的发布', version: 999999,
+    })
+    check('指向不存在发布的回执被拒', !r.ok)
+  }
+
+  // (5) 假摘要快照被拒
+  {
+    const { createTeam, ingestPublication } = await import('../src/db/teamActions')
+    const { publicSnapshotSchema } = await import('../src/team/schema')
+    const t = await createTeam({ name: '假摘要团', organizerName: '甲' })
+    const snap = publicSnapshotSchema.parse({
+      format: 'team-publication.v1', teamId: t.teamId, publicationId: 'P1', version: 1,
+      sourceDraftRevision: 1, createdAt: Date.now(), digest: 'deadbeef:10',
+      roster: t.roster, itinerary: null, items: [], checkpoints: [], expenses: [], assignments: [],
+    })
+    const r = await ingestPublication({
+      teamId: t.teamId, memberId: t.roster[0]!.memberId, snapshot: snap,
+      operationId: 'fake-digest', queueReceipt: false,
+    })
+    check('摘要不符的快照被拒', !r.ok)
+  }
+}
 async function main() {
   await testA01()
   await testA12_A13()
@@ -743,6 +837,7 @@ async function main() {
   await testExpenseReportIdOwnership()
   await testExpenseMemberValidation()
   await testTeamListProjection()
+  await testP0Regressions()
   await testA34ProxyToPlain()
   if (failed > 0) {
     console.error(`\n${failed} 项失败`)

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { NButton, NModal, NForm, NFormItem, NInput, NSelect, NDatePicker,
   NCheckboxGroup, NCheckbox, NInputNumber, NCard, NProgress, NEmpty, NDropdown, useMessage } from 'naive-ui'
 import { MoreHorizontal, X } from '@lucide/vue'
@@ -221,6 +221,40 @@ function openEdit(e: Expense) {
   showEdit.value = true
 }
 
+/**
+ * 按份分摊的份数按 memberIds 的**当前索引**存取。
+ * 用户在勾选框里取消中间某个成员时，memberIds 会缩短，但 shares 数组不会，
+ * 于是后面每个人的份数整体前移——实测：份数 [1,2,3] 取消第 2 人后，
+ * 第 3 人拿到 2 而不是 3，结算金额直接算错。
+ * 这里在 memberIds 变化时把 shares 裁剪/补齐到同长度，保持索引对齐。
+ */
+watch(
+  () => form.value.memberIds,
+  (ids, prevIds) => {
+    // 勾选变化只会有「加一个」或「减一个」两种单步操作，因此按位置对齐：
+    // 若是删除，删掉的那个位置的份数作废，其余保持原位；若是新增，补默认 1。
+    // 直接按新索引整体重取会在删除时让后面的人份数前移（本 watch 要防的正是这个）。
+    const prev = form.value.shares
+    const removedIdx = prevIds.findIndex((id) => !ids.includes(id))
+    const addedId = ids.find((id) => !prevIds.includes(id))
+
+    if (removedIdx >= 0 && !addedId) {
+      // 删除：移除该位置
+      const next = prev.filter((_, i) => i !== removedIdx)
+      form.value.shares = next.length === ids.length ? next : ids.map((_, i) => next[i] ?? 1)
+      return
+    }
+    if (addedId) {
+      // 新增：插到对应位置，默认 1 份
+      const at = ids.indexOf(addedId)
+      const next = [...prev]
+      next.splice(at, 0, 1)
+      form.value.shares = next.length === ids.length ? next : ids.map((_, i) => next[i] ?? 1)
+      return
+    }
+    form.value.shares = ids.map((_, i) => prev[i] ?? 1)
+  },
+)
 async function submitExpense() {
   const title = form.value.title.trim()
   if (!title) return
