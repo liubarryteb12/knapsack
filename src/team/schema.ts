@@ -9,10 +9,10 @@
  * - Publication 不可变，version 单调递增。
  */
 import { z } from 'zod'
-import { TEAM_FORMAT, TEAM_PUBLICATION_FORMAT } from './protocol'
+import { TEAM_FORMAT, TEAM_PUBLICATION_FORMAT, TEAM_STAGE_SCHEMA } from './protocol'
 
-/** 阶段枚举（本文件本地定义） */
-export const stageSchema = z.enum(['purchase', 'carry', 'count'])
+/** 阶段枚举：唯一事实源在 protocol.ts（TEAM_STAGE_SCHEMA），此处只是别名 */
+export const stageSchema = TEAM_STAGE_SCHEMA
 
 // ---------- 基础 ----------
 
@@ -148,7 +148,7 @@ export const publicSnapshotSchema = z.object({
   /** 发布依据的草稿版本 */
   sourceDraftRevision: z.number().int().min(1),
   createdAt: z.number().int().min(0),
-  /** 内容摘要（规范化 JSON 的 sha-256 hex），用于幂等与冲突判断 */
+/** 内容摘要（canonicalJson 的 FNV-1a 32 位 + 长度后缀），用于幂等与同 ID 异内容快速比对；完整性由传输层 AES-GCM 保证 */
   digest: z.string().min(1),
   /** 公共名册 */
   roster: z.array(

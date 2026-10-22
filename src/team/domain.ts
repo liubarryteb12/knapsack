@@ -27,6 +27,8 @@ export interface ConfirmedQty {
   submissionId: string
   revision: number
   qty: number
+  /** 主机确认时间，用于同键竞争时判定权威来源 */
+  reviewedAt: number
 }
 
 /**
@@ -49,9 +51,20 @@ export function currentConfirmedQty(submissions: Submission[]): Map<string, Conf
     if (!key.allocationId) continue
     const k = confirmKeyString(key)
     const prev = map.get(k)
-    // 主机确认顺序即权威顺序；同键后来者覆盖（替换语义，不累加）
-    if (!prev || (s.reviewedAt ?? 0) >= (prev.submissionId === s.submissionId ? -1 : 0)) {
-      map.set(k, { key, submissionId: s.submissionId, revision: s.revision, qty: s.qty })
+    // 主机确认顺序即权威顺序：同键后来者覆盖（替换语义，不累加）。
+    // 旧实现的比较条件写成了 `>= (prev.submissionId === s.submissionId ? -1 : 0)`，
+    // 而 reviewedAt 至少是 0，条件恒真——实际是"数组最后一个赢"，
+    // 与注释宣称的"以 reviewedAt 最新为准"不符。
+    // 现在显式按 reviewedAt 比较（相等时后到者胜，与主机确认顺序一致），
+    // 让纯投影的结果可预测，不依赖数组顺序。
+    if (!prev || (s.reviewedAt ?? 0) >= (prev.reviewedAt ?? 0)) {
+      map.set(k, {
+        key,
+        submissionId: s.submissionId,
+        revision: s.revision,
+        qty: s.qty,
+        reviewedAt: s.reviewedAt ?? 0,
+      })
     }
   }
   return map
@@ -67,7 +80,11 @@ export interface AllocationSummary {
   carryQty: number | null
   /** 清点：按节点分别列出；同节点唯一来源 */
   countByCheckpoint: Array<{ checkpointId: string; qty: number }>
-  /** 相对指定节点的缺口 = max(0, qtyNeeded - 该节点确认清点量)；未清点完整时为 null */
+  /** 每个已清点节点各自的缺口；不跨节点相加（SPEC 3.3） */
+  gapByCheckpoint: Array<{ checkpointId: string; qty: number; gap: number }>
+  /** 默认展示的 gap 对应哪个节点；null 表示未清点或待核对 */
+  gapCheckpointId: string | null
+  /** 相对 gapCheckpointId 的缺口 = max(0, qtyNeeded - 该节点确认清点量)；未清点完整时为 null */
   gap: number | null
   uncounted: boolean
 }
@@ -96,12 +113,20 @@ export function summarizeAllocation(
 
   // 缺口只对「有已确认清点量的节点集合」计算；
   // 只要该批次有 open/draft 未清点记录（即存在 count 阶段 submission 尚未 confirmed），标 uncounted。
-  const countedAt = countByCheckpoint.length > 0 ? countByCheckpoint[countByCheckpoint.length - 1] : null
+  // 缺口必须相对「选定节点」算（SPEC 3.3），不能默认取数组最后一个节点——
+  // 那样组织者调整节点顺序就会改变缺口数字，多个节点都清点过时展示的
+  // 永远是数组末位那个，与「按选定节点算」的语义不符。
+  // 这里按节点分别给出缺口，由调用方/快照消费方选定节点后取对应值；
+  // 顶层 gap 保留「最后清点的那个节点」作为默认展示，但显式标注来源节点。
   const hasPendingCount = hasPendingCountReport(submissions, alloc.allocationId)
-  const gap =
-    countedAt && !hasPendingCount
-      ? Math.max(0, item.qtyNeeded - countedAt.qty)
-      : null
+  const gapByCheckpoint = countByCheckpoint.map((c) => ({
+    checkpointId: c.checkpointId,
+    qty: c.qty,
+    gap: Math.max(0, item.qtyNeeded - c.qty),
+  }))
+
+  const lastCounted = countByCheckpoint.length > 0 ? countByCheckpoint[countByCheckpoint.length - 1]! : null
+  const gap = lastCounted && !hasPendingCount ? Math.max(0, item.qtyNeeded - lastCounted.qty) : null
   const uncounted = hasPendingCount || countByCheckpoint.length === 0
 
   return {
@@ -110,6 +135,10 @@ export function summarizeAllocation(
     purchaseQty,
     carryQty,
     countByCheckpoint,
+    /** 每个已清点节点各自的缺口，供按节点查看；不跨节点相加 */
+    gapByCheckpoint,
+    /** 默认展示的缺口所对应的节点（null = 未清点或待核对） */
+    gapCheckpointId: lastCounted?.checkpointId ?? null,
     gap,
     uncounted,
   }
@@ -149,6 +178,15 @@ export function canonicalJson(value: unknown): string {
 
 /** FNV-1a 32 位摘要（十六进制）。P0 用它做幂等/冲突快速比对；
  *  安全性不依赖它（传输层有 AES-GCM），只用于「同 ID 异内容」检测。 */
+/**
+ * 内容摘要：FNV-1a 32 位 + 规范化长度后缀。
+ *
+ * 注意：这不是 sha-256。选它是因为 digestOf 在 Dexie 事务内部被多处同步调用，
+ * 而 WebCrypto 的 digest 是异步的，全链路改造成本与回归风险远高于收益。
+ * 它的职责只是「同 ID 异内容」的快速比对与幂等载荷判定——真正的完整性
+ * 由传输层 AES-256-GCM 保证，安全模型不依赖碰撞抗性。
+ * 若未来需要防恶意构造碰撞（而非仅防损坏），再评估整体迁移 SHA-256。
+ */
 export function digestOf(value: unknown): string {
   const s = canonicalJson(value)
   let h = 0x811c9dc5

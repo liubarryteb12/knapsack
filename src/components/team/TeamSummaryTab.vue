@@ -54,23 +54,34 @@ function describe(s: Submission): string {
 const rejecting = ref<Submission | null>(null)
 const rejectNote = ref('')
 
+/** 正在处理的报告：防双击重复提交，也避免两击间状态变化导致意外 stale */
+const confirmingId = ref<string | null>(null)
+
 async function confirm(s: Submission) {
   const organizerId = props.team.myMemberId
   if (!organizerId) return
-  const res = await decideSubmission({
-    teamId: props.team.teamId,
-    organizerMemberId: organizerId,
-    operationId: `confirm-${s.submissionId}-${s.revision}-${Date.now().toString(36)}`,
-    submissionId: s.submissionId,
-    revision: s.revision,
-    decision: 'confirmed',
-  })
-  if (!res.ok) {
-    message.error(res.error)
-    return
+  if (confirmingId.value) return
+  confirmingId.value = s.submissionId
+  try {
+    const res = await decideSubmission({
+      teamId: props.team.teamId,
+      organizerMemberId: organizerId,
+      // operationId 含 submissionId+revision：双击时第二次会在动作层
+      // 命中幂等重放，不会产生两个不同的确认动作
+      operationId: `confirm-${s.submissionId}-${s.revision}`,
+      submissionId: s.submissionId,
+      revision: s.revision,
+      decision: 'confirmed',
+    })
+    if (!res.ok) {
+      message.error(res.error)
+      return
+    }
+    message.success('已确认，进入当前汇总')
+    emit('changed')
+  } finally {
+    confirmingId.value = null
   }
-  message.success('已确认，进入当前汇总')
-  emit('changed')
 }
 
 function openReject(s: Submission) {

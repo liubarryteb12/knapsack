@@ -89,7 +89,12 @@ async function postEnvelope(
   timeoutMs: number,
 ): Promise<TeamResponse> {
   const { ticket, keys, sessionKey } = session
-  const aad = buildAad(ticket.sessionId, 'POST', '/action')
+  // AAD 绑定动作类型与操作号（SPEC 6.3）：接收方解密时会用同一组期望值，
+  // 载荷里的类型若与 AAD 不一致则 GCM 认证失败，防跨动作重放。
+  const aad = buildAad(ticket.sessionId, 'POST', '/action', {
+    type: envelope.type,
+    operationId: envelope.operationId,
+  })
   const body = await sealWithAad(sessionKey, utf8Bytes(JSON.stringify(envelope)), aad)
   const url = `http://${ticket.ip}:${ticket.port}/action?c=${encodeURIComponent(keys.publicKeyB64u)}`
 

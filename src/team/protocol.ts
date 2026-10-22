@@ -21,9 +21,16 @@ export const TEAM_SUBMISSION_FORMAT = 'team-submission.v1'
 /** 文件兜底扩展名（P0 冻结，与 .trip 区分） */
 export const TEAM_PUBLIC_EXT = '.team-public'
 export const TEAM_SUBMIT_EXT = '.team-submit'
-/** 请求体上限（字节），无附件 */
+/**
+ * 请求体上限（字节），无附件。
+ * TS 侧不直接校验：实际执行点在 android/.../TeamHostPlugin.java 的
+ * MAX_BODY_BYTES（超出 413）。两侧值必须一致，改动时同步。
+ */
 export const TEAM_MAX_BODY_BYTES = 1024 * 1024
-/** handler 处理单请求超时（毫秒），超时原生必须返回失败，不得挂死 */
+/**
+ * handler 处理单请求超时（毫秒），超时原生必须返回失败，不得挂死。
+ * 实际执行点在 TeamHostPlugin.java 的 HANDLER_TIMEOUT_MS（504）。
+ */
 export const TEAM_HANDLER_TIMEOUT_MS = 20000
 
 // ---------- ID 形态（全部 nanoid，稳定不变） ----------
@@ -45,7 +52,7 @@ import { z } from 'zod'
 /** 三阶段：采购 / 携带 / 清点 */
 export type TeamStage = 'purchase' | 'carry' | 'count'
 
-/** zod 阶段枚举（schema.ts 用） */
+/** 阶段枚举的唯一事实源：schema.ts 从这里复用，避免两份定义漂移 */
 export const TEAM_STAGE_SCHEMA = z.enum(['purchase', 'carry', 'count'])
 
 /** 当前确认量唯一逻辑键；purchase/carry 的 checkpointId 固定 null */

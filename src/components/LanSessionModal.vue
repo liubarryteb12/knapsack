@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { NAlert, NButton, NInput, NModal, NSelect, NTag, useMessage } from 'naive-ui'
+import { NAlert, NButton, NInput, NModal, NSelect, NTag, useDialog, useMessage } from 'naive-ui'
 import QRCode from 'qrcode'
 import { useTripsStore } from '../stores/trips'
 import { useHistoryStore } from '../stores/history'
@@ -32,6 +32,7 @@ const emit = defineEmits<{ (e: 'update:show', v: boolean): void }>()
 const tripsStore = useTripsStore()
 const history = useHistoryStore()
 const message = useMessage()
+const dialog = useDialog()
 
 const isHost = canHost()
 const canUseScanner = canScan()
@@ -121,13 +122,26 @@ async function applyPushedTrip(raw: unknown) {
     return
   }
   const local = tripsStore.trips.find((t) => t.id === incoming.id)
-  if (local) history.push(local, '接入方推送前的版本')
-  await tripsStore.importTrip(incoming, local ? 'overwrite' : 'asNew')
-  message.success(
-    local
-      ? `已用接入方版本覆盖「${incoming.name}」，可撤销`
-      : `已保存接入方推来的「${incoming.name}」`,
-  )
+  if (!local) {
+    // 本机没有这份行程：直接保存为新行程，不存在覆盖风险
+    await tripsStore.importTrip(incoming, 'asNew')
+    message.success(`已保存接入方推来的「${incoming.name}」`)
+    return
+  }
+  // 接入方推送是覆盖式写入。用户可能正在本机编辑到一半，
+  // 静默覆盖（哪怕有撤销栈）会让进行中的修改消失，多数用户不会知道
+  // 要手动撤销。这里弹确认，让用户选择是否接受对方的版本。
+  dialog.warning({
+    title: '收到接入方推送',
+    content: `接入方推来「${incoming.name}」的版本，将覆盖你本机的修改（可撤销）。是否接受？`,
+    positiveText: '覆盖本机版本',
+    negativeText: '拒绝',
+    onPositiveClick: async () => {
+      history.push(local, '接入方推送前的版本')
+      await tripsStore.importTrip(incoming, 'overwrite')
+      message.success(`已用接入方版本覆盖「${incoming.name}」，可撤销`)
+    },
+  })
 }
 
 async function stopHosting() {
@@ -231,11 +245,23 @@ async function doPull() {
       return
     }
     const local = tripsStore.trips.find((t) => t.id === incoming.id)
-    if (local) history.push(local, '从局域网主机拉取前的版本')
-    await tripsStore.importTrip(incoming, local ? 'overwrite' : 'asNew')
-    message.success(
-      local ? `已用主机版本覆盖「${incoming.name}」，可撤销` : `已拉取为「${incoming.name}」`,
-    )
+    if (!local) {
+      await tripsStore.importTrip(incoming, 'asNew')
+      message.success(`已拉取为「${incoming.name}」`)
+      return
+    }
+    // 拉取同样是覆盖式写入：用户可能正在编辑本机版本，弹确认避免静默丢失
+    dialog.warning({
+      title: '从主机拉取',
+      content: `将用主机的「${incoming.name}」版本覆盖你本机的修改（可撤销）。是否继续？`,
+      positiveText: '覆盖本机版本',
+      negativeText: '取消',
+      onPositiveClick: async () => {
+        history.push(local, '从局域网主机拉取前的版本')
+        await tripsStore.importTrip(incoming, 'overwrite')
+        message.success(`已用主机版本覆盖「${incoming.name}」，可撤销`)
+      },
+    })
   } catch (e) {
     message.error(`拉取失败：${errText(e)}`)
   } finally {

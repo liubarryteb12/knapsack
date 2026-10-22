@@ -125,9 +125,29 @@ export async function openWithAad(key: CryptoKey, msg: Bytes, aad: string): Prom
   }
 }
 
-/** AAD 构造：会话 + 方法 + 路径。不含消息类型，因为类型在解密后才可读 */
-export function buildAad(sessionId: string, method: string, path: string): string {
-  return `knapsack-team/1|${sessionId}|${method}|${path}`
+/**
+ * AAD 构造：会话 + 方法 + 路径 [+ 消息类型 + 操作号]。
+ *
+ * SPEC 6.3 要求 AAD 绑定消息类型；旧实现以「类型在解密后才可读」为由
+ * 省略了它。实际两侧在加密时都已知 type/operationId（发前构造、发后解出），
+ * 因此把它们拼进 AAD，接收方解密时用同样的期望值构造 AAD——
+ * 载荷里的类型字段若被篡改，GCM 认证会失败（纵深防御，防跨动作重放）。
+ */
+export function buildAad(
+  sessionId: string,
+  method: string,
+  path: string,
+  extra?: { type?: string; operationId?: string },
+): string {
+  const parts = [
+    `knapsack-team/1`,
+    sessionId,
+    method,
+    path,
+    extra?.type ?? '',
+    extra?.operationId ?? '',
+  ]
+  return parts.join('|')
 }
 
 // ---------- 逐成员凭证（HMAC-SHA256） ----------

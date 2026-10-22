@@ -168,7 +168,7 @@
 | E28 | 2026-10-22 | 优化轮：内存与重复计算（R16 收尾） | 根目录基准脚本（300 批次/300 报告缺口总表 10 次重渲染：模板现算 37.1ms vs computed 预计算 1.70ms，22x；单团队聚合根 133.6KB vs 列表投影 9.3KB，-93.1%）；`npx tsx scripts/test-team-db.ts` 退出码 0（新增 testTeamListProjection 9 条断言）；`npx vue-tsc --noEmit` 退出码 0；`npm run build` 退出码 0；7 个测试脚本全量回归全部退出码 0 | 修复前：TripsView 模板每卡 3–4 次 reduce；TeamSummaryTab 每单元格 5 轮 submissions 遍历；团队列表页把每个团队的完整聚合根搬进内存 | src/views/TripsView.vue、src/components/team/TeamSummaryTab.vue、src/db/teamActions.ts、src/stores/teams.ts、src/views/TeamsView.vue、src/components/LanSessionModal.vue、src/components/team/TeamPublishTab.vue |
 | E29 | 2026-10-22 | R16 真机 PSS A/B 复测（阴性结果） | 设备 3a3e1f52（小米 M2012K11AC / Android 13 / WebView 116.0.5845.92）；流程：构建 before(c9dd40b) 与 after(abc2449) 两个 APK → 校验 dex/res 完全一致（dex 8911KB / res 1109KB，确认 Java 层相同、仅前端资产不同）→ 交替安装 + force-stop + `npx --no-install tsx scripts/p7-crash-sweep.ts --only=session-start-stop-x5`，每轮约 20s | before 154347/157290 KB（均值 152.2 MB），after 154737/152822 KB（均值 150.2 MB）；差异 -2.0 MB / -1.3%，落在测量噪声内。崩溃信号 0、JS 异常 0。**结论：E28 的 JS 侧降载对 PSS 无显著影响** | scripts/out/p7-crash-2026-10-22T07-28-35.json、07-29-31.json（before）；另两次 A/B 输出见命令行 |## 7. 实际变更登记
 | E30 | 2026-10-22 | 全量审核 + 消融实验（5 个 P0 修复） | 两路并行代码审核（领域层/持久化、前端组件/视图）逐条实证；`npx tsx scripts/test-team-db.ts` 退出码 0（新增 testP0Regressions 11 条断言）；`npx vue-tsc --noEmit` 退出码 0；`npm run build` 退出码 0；7 个测试脚本全量回归全部退出码 0 | 修复前实测：①并发 Promise.all 两个 publishSnapshot 同 operationId 得到 version 1 和 2、publicationId 不同；②畸形 draft（revision 字符串、qty=-999）写入后 getTeam 抛 zod 错，聚合根永久毒化；③taskRevision=1 报告在 draftRevision=5 时以 submitted 入库；④version=999999 + 不存在 publicationId 的回执被接受；⑤自报 digest='deadbeef' 的快照被接受 | src/db/teamActions.ts、src/stores/history.ts、src/components/BudgetTab.vue、scripts/test-team-db.ts |
-| 日期 | 工序 | 文件 | 变更目的 | 关联验收 | 状态 |
+| E31 | 2026-10-22 | 审核后续修复批次（A1-A6、B1/B2/B4/B5、C1/C2/C5-C7、D1-D5） | `npx vue-tsc --noEmit` 退出码 0；`npm run build` 退出码 0；7 个测试脚本全量回归全部退出码 0；中途实测发现并回退一个错误方案（确认推进 draftRevision 会把无关待审报告误判 stale），改用预览摘要比对方案 | 修复前：对 stale/rejected 报告可再次确认；费用 36/40 可同时 confirmed；currentConfirmedQty 比较器恒真；缺口只取数组末位节点；saveTeam 整包覆盖可丢并发写入；幂等命中不入队回执；AAD 未绑消息类型；join.status 不绑会话；replay 恒 false；非法预算静默存 0；双击重复提交；switchIp 并发交错；推送/拉取静默覆盖本地编辑 | 见变更登记 E31 各行 || 日期 | 工序 | 文件 | 变更目的 | 关联验收 | 状态 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-10-07 | 文档交接 | TEAM_COLLAB_SPEC.md | 需求、数据流、安全/兼容边界 | 全部定义 | 文档已写 |
 | 2026-10-07 | 文档交接 | TEAM_COLLAB_PLAN.md | P0–P7计划、35项验收、命令与样例 | 全部定义 | 文档已写 |
@@ -208,7 +208,22 @@
 | 2026-10-22 | fix(P0)：快照摘要重算 | src/db/teamActions.ts | ingestPublication 先 publicSnapshotSchema.parse 再重算 digest 与自报值比对。修复前携带自洽假摘要的快照被当「同一份」接受，成员端同 ID 异内容冲突判定失效 | A31 | 已实现，E30 |
 | 2026-10-22 | fix(P1)：redo 失效 | src/stores/history.ts | undo/redo 改为先存「当前状态」再回退。修复前 redo 弹出的正是 undo 后的当前状态，redo 永远是 no-op，用户撤销的编辑永久找不回 | — | 已实现，E30 |
 | 2026-10-22 | fix(P1)：按份分摊索引错位 | src/components/BudgetTab.vue | 加 watch 按位置对齐 shares 与 memberIds（删除移除该位、新增插入默认 1）。修复前取消勾选中间成员后，后面每人的份数整体前移，结算金额算错 | — | 已实现，E30 || 2026-10-21 | A34 修复 | src/db/teamActions.ts | 新增 toPlain()，写入 Dexie 前消除 Vue 响应式 Proxy（DataCloneError） | A34 | 已实现，E24 |
-| 2026-10-21 | P7 测试脚本 | scripts/p7-device-single.ts、p7-a22-restore.ts、p7-a28-restart.ts、p7-a30-offline.ts、p7-a34-file.ts、p7-a34-picker.ts、p7-a35-ui.ts、p7-e19-launch-race.ts、p7-crash-sweep.ts、scripts/lib/p7-*.ts | P7 单机验收自动化（CDP 驱动 WebView + adb 驱动选择器）与崩溃压测 | A22、A28、A30、A34、A35、E19、R16 | 已实现，E22–E25 |
+| 2026-10-22 | fix(A1)：review 状态校验 | src/db/teamActions.ts | decideSubmission 只允许 submitted 被确认/退回；stale 提示重新上报，confirmed/rejected 拒绝重复操作 | A23 | 已实现，E31 |
+| 2026-10-22 | fix(A2)：费用旧确认降级 | src/db/teamActions.ts | 确认费用时按 expenseReportId 把同来源其他 confirmed 降级 stale；此前费用报告永不降级，36/40 同时挂 confirmed | A09 | 已实现，E31 |
+| 2026-10-22 | fix(A3)：确认量比较器 | src/team/domain.ts | currentConfirmedQty 按 reviewedAt 真实比较（原条件恒真，实为数组序取值），结果可预测 | A05 | 已实现，E31 |
+| 2026-10-22 | fix(A4)：缺口按节点分列 | src/team/domain.ts | summarizeAllocation 增加 gapByCheckpoint/gapCheckpointId，不再默认取数组末位节点 | A07 | 已实现，E31 |
+| 2026-10-22 | fix(A5/A6)：saveTeam 读改写守卫 | src/db/teamActions.ts | 事务内 get 最新聚合，draftRevision 落后拒绝，submissions/expenses/发布指针一律取库值，编辑字段由调用方覆盖；stale 判定只作用于合并后的数据。实测旧快照编辑不再丢成员刚提交的报告 | A04 | 已实现，E31 |
+| 2026-10-22 | fix(B1)：幂等命中补回执 | src/db/teamActions.ts | ingestPublication 命中已有 publicationId 时，若 queueReceipt 且 operationId 未入队则补入队；修复「文件导入后再在线领取，主机永远显示未领取」 | A25、A26 | 已实现，E31 |
+| 2026-10-22 | fix(B2)：发布预览一致性 | src/db/teamActions.ts、src/components/team/TeamPublishTab.vue | PublishInput 增加 expectedPreviewDigest，发布时与实际快照 digest 比对，不一致拒绝并要求重看预览。注：曾试过确认时推进 draftRevision 的方案，实测会把无关待审报告误判 stale，已回退并记录原因 | A12、SPEC 4.2 | 已实现，E31 |
+| 2026-10-22 | fix(B4)：digest 注释如实标注 | src/team/domain.ts、src/team/schema.ts | 注明 FNV-1a 32 位实现与职责边界（完整性由 AES-GCM 保证），schema 注释不再声称 sha-256 | — | 已实现，E31 |
+| 2026-10-22 | fix(B5)：join.status 绑会话 | src/db/teamActions.ts、src/team/teamHostService.ts | getJoinStatus 校验请求会话公钥与登记 clientPub 一致，凭证只交付给发起申请的会话 | A20、A21 | 已实现，E31 |
+| 2026-10-22 | fix(C1)：AAD 绑定动作类型 | src/team/identity.ts、src/team/teamClient.ts、src/team/teamHostService.ts | buildAad 增加 type/operationId；客户端加密时写入，主机解密后用完整 AAD 加密响应，载荷类型被篡改即 GCM 认证失败 | A14、A16 | 已实现，E31 |
+| 2026-10-22 | fix(C2/C6/C7) | src/team/protocol.ts、src/team/schema.ts、src/db/teamActions.ts | 死常量标注原生执行点（TeamHostPlugin 的 413/504）；阶段枚举统一到 protocol 单源；发布幂等载荷纳入 itinerary | — | 已实现，E31 |
+| 2026-10-22 | fix(C5)：replay 标记 | src/db/teamActions.ts、src/team/teamHostService.ts | 幂等重放路径补 replayed 标记，hostService 转成协议层 replay，客户端可区分新建与重放 | — | 已实现，E31 |
+| 2026-10-22 | fix(D1/D2)：防重复提交 | src/components/BudgetTab.vue、src/components/team/TeamSummaryTab.vue | 花费保存加 saving 守卫；确认加 confirmingId 且 operationId 稳定化（双击命中幂等重放） | — | 已实现，E31 |
+| 2026-10-22 | fix(D3)：switchIp 互斥 | src/components/team/TeamPublishTab.vue | switching 锁防止并发 stop/start 交错 | — | 已实现，E31 |
+| 2026-10-22 | fix(D4)：覆盖前确认 | src/components/LanSessionModal.vue | 接入方推送与主机拉取覆盖本地版本前弹确认对话框，不再静默覆盖 | — | 已实现，E31 |
+| 2026-10-22 | fix(D5)：非法金额拒绝 | src/views/TripsView.vue | 新建旅行预算非法时明确报错，不再静默存 0 | — | 已实现，E31 || 2026-10-21 | P7 测试脚本 | scripts/p7-device-single.ts、p7-a22-restore.ts、p7-a28-restart.ts、p7-a30-offline.ts、p7-a34-file.ts、p7-a34-picker.ts、p7-a35-ui.ts、p7-e19-launch-race.ts、p7-crash-sweep.ts、scripts/lib/p7-*.ts | P7 单机验收自动化（CDP 驱动 WebView + adb 驱动选择器）与崩溃压测 | A22、A28、A30、A34、A35、E19、R16 | 已实现，E22–E25 |
 
 本轮核对结果：P0–P7工序与依赖、A01–A35编号及阶段退出条件可对应；P4业务样例对应A05–A11，P7覆盖全部适用验收项。六项补充未新增或重编号规格章节，SPEC 5.2在6.3/7.3中的引用有效，下表定位均存在。A29仍仅在实现独立任务确认时适用；Android、前台服务限制、密码方案和文件格式等建议默认没有改写为用户明确决策，具体实现选择仍待P0/P1。
 

@@ -255,7 +255,11 @@ watch(
     form.value.shares = ids.map((_, i) => prev[i] ?? 1)
   },
 )
+/** 防重复提交：新建时双击保存会 push 两条不同 id 的相同花费，金额重复统计 */
+const saving = ref(false)
+
 async function submitExpense() {
+  if (saving.value) return
   const title = form.value.title.trim()
   if (!title) return
   const amountFen = yuanToFen(form.value.amountYuan)
@@ -316,8 +320,13 @@ async function submitExpense() {
     const idx = props.trip.expenses.findIndex((x) => x.id === expense.id)
     if (idx >= 0) props.trip.expenses.splice(idx, 1, expense)
   }
-  await tripsStore.saveTrip(props.trip)
-  showEdit.value = false
+  saving.value = true
+  try {
+    await tripsStore.saveTrip(props.trip)
+    showEdit.value = false
+  } finally {
+    saving.value = false
+  }
 }
 
 async function removeExpense(id: string) {

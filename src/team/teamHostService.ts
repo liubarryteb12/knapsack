@@ -146,18 +146,28 @@ async function handleTeamRequest(
 
     const clientPub = await importEcdhPublicKey(clientPubB64)
     const key = await deriveSessionKey(hostPrivateKey, clientPub, evt.sessionId, 'host<-client')
-    const aad = buildAad(evt.sessionId, 'POST', '/action')
 
     const raw = base64ToBytes(evt.bodyB64)
-    const plain = await openWithAad(key, raw, aad)
+
+    // 先用不含 type/operationId 的 AAD 解密（解密前还不知道这两个字段），
+    // 解出后校验载荷类型/操作号存在，再用完整 AAD（绑定 type+operationId）
+    // 加密响应——响应的 AAD 与请求侧对称，篡改载荷类型会破坏 GCM 认证。
+    const aadBase = buildAad(evt.sessionId, 'POST', '/action')
+    const plain = await openWithAad(key, raw, aadBase)
     const envelope = JSON.parse(new TextDecoder().decode(plain)) as TeamEnvelope
 
     if (envelope.protocol !== 'knapsack-team/1' || envelope.schemaVersion !== 1) {
       throw new Error('协议版本不匹配')
     }
     if (envelope.teamId !== expectedTeamId) throw new Error('团队不匹配')
+    if (!envelope.type || !envelope.operationId) throw new Error('报文缺少动作类型或操作号')
 
-    const resp = await dispatchAction(envelope)
+    const aad = buildAad(evt.sessionId, 'POST', '/action', {
+      type: envelope.type,
+      operationId: envelope.operationId,
+    })
+
+    const resp = await dispatchAction(envelope, clientPubB64)
     const sealed = await sealWithAad(key, utf8Bytes(JSON.stringify(resp)), aad)
     // 响应以 base64 文本回传，避免二进制经 Java String 转 UTF-8 损坏
     await complete(true, bytesToBase64(sealed))
@@ -168,7 +178,7 @@ async function handleTeamRequest(
 
 // ---------- 动作分发（含服务端授权） ----------
 
-async function dispatchAction(envelope: TeamEnvelope): Promise<TeamResponse> {
+async function dispatchAction(envelope: TeamEnvelope, sessionClientPub?: string): Promise<TeamResponse> {
   const p = (envelope.payload ?? {}) as Record<string, unknown>
   const teamId = envelope.teamId
 
@@ -185,7 +195,8 @@ async function dispatchAction(envelope: TeamEnvelope): Promise<TeamResponse> {
       return res.ok ? okResponse(res) : errResponse(res.error)
     }
     case 'join.status': {
-      const res = await getJoinStatus(teamId, String(p.joinRequestId ?? ''))
+      // 凭证只交付给发起申请的那个会话：比对请求会话的临时公钥
+      const res = await getJoinStatus(teamId, String(p.joinRequestId ?? ''), sessionClientPub)
       return res.ok ? okResponse(res) : errResponse(res.error)
     }
     default:
@@ -204,6 +215,19 @@ async function dispatchAction(envelope: TeamEnvelope): Promise<TeamResponse> {
   })
   if (!actor) return errResponse('身份凭证无效')
 
+  /**
+   * 把动作结果包成协议响应。
+   *
+   * replay 标记：动作层返回的结果若带 replayed 字段（各 action 的幂等重放
+   * 路径写入），转成协议层的 replay，客户端据此区分「新建成功」与
+   * 「幂等命中（重试/重传）」。
+   */
+  const toResponse = (res: Record<string, unknown>): TeamResponse => {
+    const r = okResponse(res)
+    if (res.replayed === true) r.replay = true
+    return r
+  }
+
   switch (envelope.type) {
     case 'publication.latest': {
       const snap = await latestPublicationOf(teamId)
@@ -217,7 +241,7 @@ async function dispatchAction(envelope: TeamEnvelope): Promise<TeamResponse> {
         operationId: envelope.operationId,
         draft: p.draft as never,
       })
-      return res.ok ? okResponse(res) : errResponse(res.error)
+      return res.ok ? toResponse(res) : errResponse(res.error)
     }
     case 'receipt.submit': {
       const res = await acceptReceipt({
@@ -227,7 +251,7 @@ async function dispatchAction(envelope: TeamEnvelope): Promise<TeamResponse> {
         publicationId: String(p.publicationId ?? ''),
         version: Number(p.version ?? 0),
       })
-      return res.ok ? okResponse(res) : errResponse(res.error)
+      return res.ok ? toResponse(res) : errResponse(res.error)
     }
     default:
       return errResponse(`未知动作：${envelope.type}`)

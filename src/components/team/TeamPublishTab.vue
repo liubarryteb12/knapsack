@@ -73,16 +73,25 @@ async function stop() {
   qrUrl.value = ''
 }
 
+/** 切换网卡互斥锁：两次并发 switchIp 会 stop/start 交错，底层状态不一致 */
+const switching = ref(false)
+
 async function switchIp(ip: string) {
-  const previous = selectedIp.value
-  selectedIp.value = ip
-  // 换网卡需重开会话：二维码里的地址必须与监听地址一致
-  await stop()
-  await start()
-  // 新地址起不来时回退到原地址再试一次，别把用户留在「没有会话也没有二维码」的状态
-  if (!session.value && previous && previous !== ip) {
-    selectedIp.value = previous
+  if (switching.value) return
+  switching.value = true
+  try {
+    const previous = selectedIp.value
+    selectedIp.value = ip
+    // 换网卡需重开会话：二维码里的地址必须与监听地址一致
+    await stop()
     await start()
+    // 新地址起不来时回退到原地址再试一次，别把用户留在「没有会话也没有二维码」的状态
+    if (!session.value && previous && previous !== ip) {
+      selectedIp.value = previous
+      await start()
+    }
+  } finally {
+    switching.value = false
   }
 }
 
@@ -111,6 +120,9 @@ async function publish() {
       organizerMemberId: organizerId,
       operationId: `publish-${props.team.draftRevision}-${Date.now().toString(36)}`,
       expectedDraftRevision: props.team.draftRevision,
+      // 把用户看到的预览摘要带给主机：预览之后若有人确认/退回报告或审批加入，
+      // 实际快照会与预览不一致，发布被拒绝并要求重看（SPEC 4.2）。
+      expectedPreviewDigest: preview.value.digest,
     })
     if (!res.ok) {
       message.error(res.error)

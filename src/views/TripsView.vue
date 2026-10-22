@@ -65,7 +65,13 @@ async function submitCreate() {
     message.error('结束日期不能早于开始日期')
     return
   }
-  const budgetFen = yuanToFen(createForm.value.budgetYuan) ?? 0
+  // 非法金额直接拒绝而不是静默当 0：用户以为设了 5000 预算实际存入 0，
+  // 后续预算进度条/结余全部失真，且没有任何提示指出原因。
+  const budgetFen = yuanToFen(createForm.value.budgetYuan)
+  if (budgetFen === null) {
+    message.error('预算金额格式不对，请输入例如 5000 或 5000.50；不设预算请填 0')
+    return
+  }
   const trip = await tripsStore.addTrip({
     name,
     startDate: createForm.value.startDate,

@@ -36,10 +36,6 @@ function confirmKeyOf(s: Submission): string | null {
   return confirmKeyString({ allocationId: s.allocationId, stage: s.stage, checkpointId: s.checkpointId })
 }
 
-/** 兼容旧调用名 */
-function targetConfirmKey(s: Submission | undefined): string | null {
-  return s ? confirmKeyOf(s) : null
-}
 import { generateCredentialSecret, issueCredential, toB64u, fromB64u, verifyCredential } from '../team/identity'
 import type { TeamIdempotencyRecord, TeamOutboxEntry, TeamLink } from './teamSchema'
 
@@ -118,8 +114,9 @@ export interface AcceptSubmissionInput {
 }
 
 export type AcceptSubmissionResult =
-  | { ok: true; submissionId: string; revision: number }
-  | { ok: false; error: string; conflict?: boolean }
+  | { ok: true; submissionId: string; revision: number; /** 幂等重放命中（同 operationId 重试） */
+      replayed?: boolean }
+  | { ok: false; error: string; conflict?: boolean; replayed?: boolean }
 
 /**
  * 主机接收一条报告（幂等）。
@@ -136,7 +133,7 @@ export async function acceptSubmission(
   const key = idempotencyKey(input.teamId, input.authorMemberId, 'submission.submit', input.operationId)
 
   const outcome = await checkIdempotent<AcceptSubmissionResult>(key, payloadDigest)
-  if (outcome.kind === 'replay') return outcome.result
+  if (outcome.kind === 'replay') return { ...outcome.result, replayed: true }
   if (outcome.kind === 'conflict') {
     return { ok: false, error: '同 operationId 但内容不同，疑似重放冲突', conflict: true }
   }
@@ -186,7 +183,12 @@ export async function acceptSubmission(
       // TeamState 毒化——此后每次 getTeam/事务都会 teamStateSchema.parse 抛错，
       // 主机再也读不了这个团队。校验失败必须拒绝，不落库。
       // 注意：uploadedAt/review/reviewNote/reviewedAt 由主机填写，先补齐再过 schema。
-      const outdated = draft.taskRevision < parsed.draftRevision
+      // SPEC 3.4：依据旧版分工提交的报告，进待审核列表前先标 stale，
+      // 不让组织者把过时数据当新报告确认进汇总。
+      // 例外：revision > 1 是作者对同一条报告的修订——它本就是在旧版本
+      // 基础上补充/更正，标 stale 会让修订永远无法被确认（组织者看到的
+      // 是一条永远「过时」的记录）。修订照常进待审核，由组织者判断。
+      const outdated = draft.revision === 1 && draft.taskRevision < parsed.draftRevision
       const submission: Submission = submissionSchema.parse({
         ...draft,
         teamId: input.teamId,
@@ -274,16 +276,29 @@ export async function decideSubmission(input: ConfirmDecisionInput): Promise<Con
       )
       if (!sub) throw new Error('未找到对应版本的报告')
 
+      // SPEC 3.4：只有 submitted 状态的报告能被确认/退回。
+      // 之前不校验，对 stale / rejected 的报告也能再点一次"确认"：
+      // 误退回的报告被无声翻回 confirmed，被分工变更标 stale 的旧版报告
+      // 则直接把过时数据送进当前汇总。
+      if (sub.review !== 'submitted') {
+        throw new Error(
+          sub.review === 'stale'
+            ? '这份报告依据的分工已变更，请让成员领取新版后重新上报'
+            : `这份报告已是「${sub.review}」状态，不能重复确认`,
+        )
+      }
+
       const now = Date.now()
-      const targetKey = targetConfirmKey(
-        parsed.submissions.find(
-          (s) => s.submissionId === input.submissionId && s.revision === input.revision,
-        ),
-      )
+      const targetKey = confirmKeyOf(sub)
 
       // SPEC 3.3：同一逻辑键（allocationId+stage+checkpointId）只允许一条 confirmed。
       // 确认这一条时，把同键的其他来源降级为 stale——否则汇总会出现两个"当前确认量"，
       // 数字取决于 reviewedAt 与数组顺序（不确定），且历史来源会一直挂在 confirmed 状态。
+      //
+      // 费用报告的逻辑键不是 (allocationId, stage, checkpointId) 而是
+      // expenseReportId（SPEC 3.5「一笔费用一个来源」）：confirmKeyOf 对
+      // amountFen 为 null 以外的费用报告返回 null，旧实现因此永远不降级，
+      // 同一来源的 36 与 40 会同时挂在 confirmed 上。
       const updatedSubs = parsed.submissions.map((s) => {
         if (s.submissionId === input.submissionId && s.revision === input.revision) {
           return {
@@ -293,17 +308,17 @@ export async function decideSubmission(input: ConfirmDecisionInput): Promise<Con
             reviewedAt: now,
           }
         }
-        if (
-          input.decision === 'confirmed' &&
-          s.review === 'confirmed' &&
-          targetKey !== null &&
-          confirmKeyOf(s) === targetKey
-        ) {
-          return {
-            ...s,
-            review: 'stale' as const,
-            reviewNote: s.reviewNote || `被 ${input.submissionId}#${input.revision} 取代`,
-            reviewedAt: now,
+        if (input.decision === 'confirmed' && s.review === 'confirmed') {
+          const superseded =
+            (targetKey !== null && confirmKeyOf(s) === targetKey) ||
+            (sub.expenseReportId !== null && s.expenseReportId === sub.expenseReportId)
+          if (superseded) {
+            return {
+              ...s,
+              review: 'stale' as const,
+              reviewNote: s.reviewNote || `被 ${input.submissionId}#${input.revision} 取代`,
+              reviewedAt: now,
+            }
           }
         }
         return s
@@ -356,6 +371,14 @@ export async function decideSubmission(input: ConfirmDecisionInput): Promise<Con
         }
       }
 
+      // 关于「预览后确认新报告再发布，未预览的变化混入」：在数据层推进
+      // draftRevision 是错误方案——它是分工编辑的版本，推进后 saveTeam 的
+      // stale 判定会把所有依据当前分工的待审报告误判为过时（实测确认），
+      // 而且确认时被迫同步抬 taskRevision，语义上把「分工版本」和「审核事实」
+      // 两个概念搅在一起。正确拦截点是发布预览本身，见 TeamPublishTab：
+      // 预览快照在 render 时生成，若确认动作发生在预览之后，
+      // 发布时 TeamState.submissions 已变化——由 UI 层的「预览基于 draftRevision N，
+      // 当前已是 N+1」提示组织者重看预览（B2-UI）。
       const updated: TeamState = {
         ...parsed,
         submissions: updatedSubs,
@@ -395,6 +418,13 @@ export interface PublishInput {
   operationId: string
   /** 发布者看到的草稿版本，防止并发修改混入（SPEC 4.2 sourceDraftRevision） */
   expectedDraftRevision: number
+  /**
+   * 发布者点「发布」时看到的预览快照摘要（buildPublicSnapshot 的 digest）。
+   * 传入后与实际生成的快照比对：确认/退回等动作若发生在预览之后，
+   * 实际快照会与预览不一致，发布被拒绝并要求重看预览（SPEC 4.2
+   * 「不把未预览的并发变化偷偷混入」）。不传则跳过该检查（协议端无法预览）。
+   */
+  expectedPreviewDigest?: string
   itinerary?: PublicSnapshot['itinerary']
 }
 
@@ -408,8 +438,13 @@ export type PublishResult =
  * 中途任何失败事务回滚，指针保持原版（A12/A13）。
  */
 export async function publishSnapshot(input: PublishInput): Promise<PublishResult> {
-  // 幂等载荷：expectedDraftRevision 是业务的一部分
-  const payloadDigest = digestOf({ expectedDraftRevision: input.expectedDraftRevision })
+  // 幂等载荷：expectedDraftRevision 与 itinerary 都是业务的一部分。
+  // 只含 revision 时，同 operationId 重试但换了 itinerary 的请求会静默
+  // 返回第一次的结果，第二次的 itinerary 被丢弃。
+  const payloadDigest = digestOf({
+    expectedDraftRevision: input.expectedDraftRevision,
+    itinerary: input.itinerary ?? null,
+  })
   const key = idempotencyKey(input.teamId, input.organizerMemberId, 'publication.publish', input.operationId)
 
   try {
@@ -436,6 +471,16 @@ export async function publishSnapshot(input: PublishInput): Promise<PublishResul
         throw new Error('草稿已变化，请重看预览后再发布')
       }
       if (parsed.roster.length === 0) throw new Error('名册为空，先加成员再发布')
+
+      // 预览一致性（SPEC 4.2）：预览之后如果有人确认/退回了报告、
+      // 或者 pendingJoins 被审批，实际生成的快照就不再是发布者看到的那份。
+      // 比对 digest 拒绝掉，比 draftRevision 精确——后者只在分工编辑时变化。
+      if (input.expectedPreviewDigest !== undefined) {
+        const probe = buildPublicSnapshot(parsed, 'preview', 0, 0)
+        if (probe.digest !== input.expectedPreviewDigest) {
+          throw new Error('发布内容与预览不一致（期间有新的确认或审批），请重看预览后再发布')
+        }
+      }
 
       const version = (parsed.latestPublication?.version ?? 0) + 1
       const publicationId = newId()
@@ -538,13 +583,29 @@ export async function ingestPublication(input: IngestPublicationInput): Promise<
           if (!sameDigest) {
             return { ok: false as const, error: '同 publicationId 但内容不同，冲突' }
           }
-          // 幂等命中：不重复入队回执
+          // 幂等命中 ≠ 回执已发。典型场景：成员先用文件兜底导入了第 3 版
+          // （queueReceipt:false），之后连上主机点「领取」——命中已有
+          // publicationId 就直接 return，回执永远不入队，主机一直显示
+          // 该成员未领取。这里按需补入队：operationId 未入过队才补。
           const outboxHit = await db.teamOutbox.get(input.operationId)
+          const wantReceipt = input.queueReceipt !== false
+          let queued = !!outboxHit
+          if (wantReceipt && !outboxHit) {
+            await db.teamOutbox.put({
+              operationId: input.operationId,
+              teamId: input.teamId,
+              kind: 'receipt',
+              payload: { publicationId: existing.publicationId, version: existing.meta.version },
+              createdAt: Date.now(),
+              attempts: 0,
+            })
+            queued = true
+          }
           return {
             ok: true as const,
             version: existing.meta.version,
             publicationId: existing.publicationId,
-            receiptQueued: !outboxHit ? false : true,
+            receiptQueued: queued,
           }
         }
 
@@ -634,7 +695,8 @@ export interface ReceiptInput {
 }
 
 export type ReceiptResult =
-  | { ok: true; latestVersion: number }
+  | { ok: true; latestVersion: number; /** 幂等重放命中（同 operationId 重试） */
+      replayed?: boolean }
   | { ok: false; error: string }
 
 /** 主机记录成员领取回执；同 operationId 幂等；版本只前进不降级（A26/A27） */
@@ -648,7 +710,7 @@ export async function acceptReceipt(input: ReceiptInput): Promise<ReceiptResult>
   try {
     return await db.transaction('rw', db.teamState, db.teamPublications, db.teamIdempotency, async () => {
       const outcome = await inTxIdempotent<ReceiptResult>(key, payloadDigest)
-      if (outcome.kind === 'replay') return outcome.result
+      if (outcome.kind === 'replay') return { ...outcome.result, replayed: true }
       if (outcome.kind === 'conflict') throw new Error('同 operationId 但内容不同')
 
       // 回执必须指向真实存在的发布版本。之前不校验，成员提交一个
@@ -752,26 +814,69 @@ export async function createTeam(input: {
  * 不能继续代表当前事实。已 confirmed 的降级为 stale（让出逻辑键），
  * 待审的直接标 stale（不再进入待审核列表）。
  */
+/**
+ * 保存团队草稿。
+ *
+ * 必须是读-改-写，不能整包 put：调用方（如 TeamSetupTab.mutate）拿到的是
+ * 组件挂载时的 props 快照，主机会话开着时成员可能刚提交了新报告、
+ * 组织者可能刚在另一个 tab 确认了一条——整包覆盖会把这些静默抹掉。
+ *
+ * 守卫：
+ * - draftRevision 必须不低于库里的现值（防止旧快照把版本回退）；
+ * - 只由调用方提供的「编辑字段」覆盖，submissions/expenses/publication*
+ *   一律以库里最新值为准，避免并发写入互相覆盖。
+ */
 export async function saveTeam(state: TeamState): Promise<TeamState> {
   const now = Date.now()
-  const staleMarked: TeamState = {
-    ...state,
-    submissions: state.submissions.map((s) =>
-      s.taskRevision < state.draftRevision &&
+  return await db.transaction('rw', db.teamState, async () => {
+    const current = await db.teamState.get(state.teamId)
+    if (!current) throw new Error('团队不存在')
+    const base = teamStateSchema.parse(current)
+
+    if (state.draftRevision < base.draftRevision) {
+      throw new Error(
+        `草稿版本落后（提交 ${state.draftRevision}，当前 ${base.draftRevision}），请刷新后重试`,
+      )
+    }
+
+    const merged: TeamState = {
+      ...base,
+      // 调用方可编辑的展示/结构字段
+      name: state.name,
+      myMemberId: state.myMemberId,
+      roster: state.roster,
+      items: state.items,
+      allocations: state.allocations,
+      checkpoints: state.checkpoints,
+      pendingJoins: state.pendingJoins,
+      draftRevision: state.draftRevision,
+      // 并发写入的字段一律取库里的最新值
+      submissions: base.submissions,
+      expenses: base.expenses,
+      latestPublication: base.latestPublication,
+      publicationHistory: base.publicationHistory,
+      credentialSecret: base.credentialSecret,
+      updatedAt: now,
+    }
+
+    // A08：分工推进后，依据旧版本提交的报告标 stale
+    merged.submissions = merged.submissions.map((s) =>
+      s.taskRevision < merged.draftRevision &&
       (s.review === 'submitted' || s.review === 'confirmed')
         ? {
             ...s,
             review: 'stale' as const,
-            reviewNote: s.reviewNote || `分工已更新（报告依据版本 ${s.taskRevision}，当前 ${state.draftRevision}）`,
+            reviewNote:
+              s.reviewNote || `分工已更新（报告依据版本 ${s.taskRevision}，当前 ${merged.draftRevision}）`,
             reviewedAt: now,
           }
         : s,
-    ),
-    updatedAt: now,
-  }
-  const parsed = teamStateSchema.parse(staleMarked)
-  await db.teamState.put(parsed)
-  return parsed
+    )
+
+    const parsed = teamStateSchema.parse(merged)
+    await db.teamState.put(parsed)
+    return parsed
+  })
 }
 
 export async function getTeam(teamId: string): Promise<TeamState | undefined> {
@@ -906,11 +1011,26 @@ export async function registerJoinRequest(input: JoinRequestInput): Promise<Join
 }
 
 /** 成员轮询审批状态；只有主机已审批时才会带出凭证 */
-export async function getJoinStatus(teamId: string, joinRequestId: string): Promise<JoinStatusResult> {
+/**
+ * 成员轮询加入申请状态。
+ *
+ * requesterPub 用于把凭证交付绑定到发起申请的那个会话：joinRequestId
+ * 虽是客户端随机生成、只在加密信道传输，但一旦经日志/剪贴板/同步泄露，
+ * 没有这层绑定，任何会话都能凭它把 memberId + credential 领走。
+ * 传 undefined（老协议/测试直调）时跳过校验，行为与旧版一致。
+ */
+export async function getJoinStatus(
+  teamId: string,
+  joinRequestId: string,
+  requesterPub?: string,
+): Promise<JoinStatusResult> {
   const team = await getTeam(teamId)
   if (!team) return { ok: false, error: '团队不存在' }
   const entry = team.pendingJoins.find((j) => j.joinRequestId === joinRequestId)
   if (!entry) return { ok: false, error: '没有这条加入申请' }
+  if (requesterPub !== undefined && entry.clientPub && entry.clientPub !== requesterPub) {
+    return { ok: false, error: '加入申请不属于当前会话' }
+  }
   return toJoinStatus(entry)
 }
 

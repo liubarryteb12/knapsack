@@ -544,11 +544,26 @@ async function testConfirmKeyUniqueness() {
     (alloc?.confirmed ?? []).filter((r) => r.stage === 'purchase').length === 1,
   )
 
-  // 退回不该把别的来源拉回 confirmed
+  // A1：只有 submitted 状态能被确认/退回。K2 此时已是 confirmed，
+  // 再点「退回」应被拒绝——否则组织者误操作会把已确认数据无声翻掉。
   const d3 = await decideSubmission({ teamId: team.teamId, organizerMemberId: org, operationId: 'k-d3', submissionId: 'K2', revision: 1, decision: 'rejected' })
+  check('对已 confirmed 的报告退回被拒绝（A1）', !d3.ok)
   const after3 = await getTeam(team.teamId)
-  check('退回 K2 后该键无确认量（不会复活 K1）', !currentConfirmedQty(after3!.submissions).has(key))
-  check('退回不影响幂等返回', d3.ok)
+  check('K2 仍是 confirmed，K1 不复活', currentConfirmedQty(after3!.submissions).get(key)?.qty === 24)
+
+  // 重新提交一条新报告走完整 submitted → rejected 路径，验证退回本身可用
+  const a5 = await acceptSubmission({
+    teamId: team.teamId, authorMemberId: org, operationId: 'k-o5',
+    draft: { submissionId: 'K5', revision: 1, teamId: team.teamId, allocationId: 'a1', stage: 'purchase', checkpointId: null, taskRevision: team.draftRevision, qty: 10, amountFen: null, expenseReportId: null, payerMemberId: null, relatedAllocationIds: ['a1'], note: '' },
+  })
+  check('新报告 K5 可接收', a5.ok)
+  const d5 = await decideSubmission({ teamId: team.teamId, organizerMemberId: org, operationId: 'k-d5', submissionId: 'K5', revision: 1, decision: 'rejected' })
+  check('submitted 状态可被退回', d5.ok)
+  const after5 = await getTeam(team.teamId)
+  check('退回 K5 后该键仍只有 K2 的确认量', currentConfirmedQty(after5!.submissions).get(key)?.qty === 24)
+  // 被退回的报告不能再确认
+  const d6 = await decideSubmission({ teamId: team.teamId, organizerMemberId: org, operationId: 'k-d6', submissionId: 'K5', revision: 1, decision: 'confirmed' })
+  check('已退回的报告不能再确认（A1）', !d6.ok)
 }
 
 // ---------- A08：分工更新后旧版本报告标 stale ----------
@@ -827,6 +842,42 @@ async function testP0Regressions() {
     check('摘要不符的快照被拒', !r.ok)
   }
 }
+// ---------- saveTeam 读-改-写守卫（防并发覆盖） ----------
+
+async function testSaveTeamConcurrency() {
+  console.log('saveTeam 并发守卫')
+  const { createTeam, saveTeam, getTeam, acceptSubmission } = await import('../src/db/teamActions')
+
+  const t = await createTeam({ name: '并发保存团', organizerName: '甲' })
+  const org = t.roster.find((m) => m.role === 'organizer')!.memberId
+
+  // 成员先提交一份报告（模拟主机会话开着时的并发写入）
+  await acceptSubmission({
+    teamId: t.teamId, authorMemberId: org, operationId: 'cc-1',
+    draft: {
+      submissionId: 'CC1', revision: 1, teamId: t.teamId, allocationId: 'a1',
+      stage: 'purchase', checkpointId: null, taskRevision: t.draftRevision,
+      qty: 20, amountFen: null, expenseReportId: null, payerMemberId: null,
+      relatedAllocationIds: ['a1'], note: '成员刚提交的',
+    },
+  })
+  const withSub = await getTeam(t.teamId)
+  check('成员报告已入库', withSub!.submissions.length === 1)
+
+  // 组织者基于挂载时的旧快照做一次编辑（只改团队名，draftRevision+1）
+  const staleSnapshot = { ...withSub!, name: '改名后的团队' }
+  delete (staleSnapshot as { submissions?: unknown }).submissions
+  const saved = await saveTeam({ ...staleSnapshot, submissions: [] as never, draftRevision: t.draftRevision + 1 })
+  check('旧快照的编辑能保存（draftRevision 前进）', saved.name === '改名后的团队')
+
+  const after = await getTeam(t.teamId)
+  check('并发的成员报告没有被覆盖丢失', after!.submissions.length === 1)
+  check('报告内容完好', after!.submissions[0]!.note === '成员刚提交的')
+
+  // draftRevision 落后必须拒绝
+  const regress = await saveTeam({ ...after!, draftRevision: 1 }).catch((e) => ({ ok: false, error: String(e) }))
+  check('draftRevision 回退被拒绝', 'error' in regress && !regress.ok)
+}
 async function main() {
   await testA01()
   await testA12_A13()
@@ -838,6 +889,7 @@ async function main() {
   await testExpenseMemberValidation()
   await testTeamListProjection()
   await testP0Regressions()
+  await testSaveTeamConcurrency()
   await testA34ProxyToPlain()
   if (failed > 0) {
     console.error(`\n${failed} 项失败`)
