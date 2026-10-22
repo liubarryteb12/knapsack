@@ -10,7 +10,6 @@
  */
 import type {
   PublicSnapshot,
-  PublicationMeta,
   Submission,
   TeamAllocation,
   TeamCheckpoint,
@@ -348,47 +347,13 @@ function touchAssignment(
   }
 }
 
-// ---------- 发布幂等 ----------
-
-export interface PublishOutcome {
-  meta: PublicationMeta
-  snapshot: PublicSnapshot
-  /** true = 本次新建；false = 同 operationId 幂等命中，返回原版 */
-  created: boolean
-}
-
-/**
- * 发布的领域判断（不含事务）：给定 draftRevision 与历史，
- * 返回应发布的版本号或指出需要重看预览。
- */
-export function nextPublishVersion(team: TeamState): {
-  ok: true
-  version: number
-} | {
-  ok: false
-  reason: 'draft-outdated' | 'no-roster'
-} {
-  if (team.roster.length === 0) return { ok: false, reason: 'no-roster' }
-  const latest = team.latestPublication
-  if (latest && latest.sourceDraftRevision !== team.draftRevision) {
-    // 最新发布后草稿又变了：要求重看预览（不自动混入未预览变化）
-    // 这里仍允许发布，只是版本基于当前 draftRevision；预览检查在 UI 层做
-    return { ok: true, version: latest.version + 1 }
-  }
-  return { ok: true, version: (latest?.version ?? 0) + 1 }
-}
-
-/**
- * 「同 ID 异内容」冲突判断：同 publicationId 但 digest 不同 → 冲突。
- * 同 ID 同 digest → 幂等命中。
- */
-export function publicationConflict(
-  existing: PublicationMeta | undefined,
-  incomingDigest: string,
-): 'identical' | 'conflict' | 'new' {
-  if (!existing) return 'new'
-  return existing.digest === incomingDigest ? 'identical' : 'conflict'
-}
+// ----------
+// 发布相关的领域判断说明（原 nextPublishVersion/publicationConflict 已删除）：
+// 版本号计算与「同 ID 异内容」判断都内聚在 db/teamActions 的发布事务里，
+// 预览一致性由 PublishInput.expectedPreviewDigest 校验。
+// 这里曾有一套与实现矛盾的领域函数（「仍允许发布」分支违反严格预览规则），
+// 且无任何调用方，删除以免误导后续维护。
+// ----------
 
 // ---------- 校验类纯函数 ----------
 

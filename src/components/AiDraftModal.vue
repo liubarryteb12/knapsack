@@ -26,6 +26,8 @@ const range = computed<[number, number] | null>(() =>
   startTs.value !== null && endTs.value !== null ? [startTs.value, endTs.value] : null,
 )
 const loading = ref(false)
+/** 生成请求序号：关闭弹窗或重新生成时推进，旧请求返回后全部作废 */
+let generateSeq = 0
 const errorMsg = ref('')
 const draft = ref<AiDraft | null>(null)
 const draftRange = ref<[number, number] | null>(null)
@@ -54,6 +56,9 @@ async function generate() {
     message.error('结束日期不能早于开始日期')
     return
   }
+  // 自增序号：生成期间用户可能关掉弹窗再重开、改了愿望重新生成。
+  // 旧请求晚返回时不能把过期草稿塞给当前会话。
+  const mySeq = ++generateSeq
   loading.value = true
   errorMsg.value = ''
   draft.value = null
@@ -62,14 +67,16 @@ async function generate() {
   const end = toDateStr(new Date(range.value[1]))
   try {
     const result = await generateDraft(config, wish.value.trim(), start, end)
+    if (mySeq !== generateSeq) return
     // 按范围补齐缺的天
     draft.value = result.draft
     draftRange.value = [range.value[0], range.value[1]]
   } catch (err) {
+    if (mySeq !== generateSeq) return
     if (err instanceof AiError) errorMsg.value = err.message
     else errorMsg.value = `生成失败：${err instanceof Error ? err.message : String(err)}`
   } finally {
-    loading.value = false
+    if (mySeq === generateSeq) loading.value = false
   }
 }
 
@@ -106,6 +113,8 @@ async function confirmImport() {
 }
 
 function close() {
+  // 关闭即作废飞行中的生成请求：返回后不会再写任何状态
+  generateSeq++
   emit('update:show', false)
   errorMsg.value = ''
   draft.value = null

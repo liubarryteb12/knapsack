@@ -6,7 +6,7 @@
  * - 分发状态：谁已领取最新版（来自主机幂等表中的回执记录）
  * 会话关闭/离开页面即停止接入；第一版不做后台常驻（SPEC 7.3）。
  */
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NAlert, NButton, NCard, NSelect, NTag, useMessage } from 'naive-ui'
 import QRCode from 'qrcode'
 import { Play, Square, Send, FileDown } from '@lucide/vue'
@@ -178,7 +178,12 @@ async function loadReceipts() {
   receipts.value = map
 }
 
-void loadReceipts()
+// 挂载时加载，teamId 变化（详情页复用组件）时重载
+onMounted(() => void loadReceipts())
+watch(
+  () => props.team.teamId,
+  () => void loadReceipts(),
+)
 
 const latestVersion = computed(() => props.team.latestPublication?.version ?? 0)
 

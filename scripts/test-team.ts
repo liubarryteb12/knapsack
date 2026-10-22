@@ -8,8 +8,6 @@ import {
   canonicalJson,
   currentConfirmedQty,
   digestOf,
-  nextPublishVersion,
-  publicationConflict,
   sharesValid,
   buildPublicSnapshot,
 } from '../src/team/domain'
@@ -183,25 +181,17 @@ function testShares() {
 
 function testPublish() {
   console.log('发布版本')
-  const t1 = makeTeam({})
-  const v1 = nextPublishVersion(t1)
-  check('首版为 1', v1.ok && v1.version === 1)
-
+  // 版本计算与「同 ID 异内容」判断已内聚到 db/teamActions 的发布事务
+  // （domain 的 nextPublishVersion/publicationConflict 与实现矛盾且无调用方，已删除）。
+  // 事务级覆盖见 test-team-db.ts 的 A12/A13 与并发幂等用例。
   const t2 = makeTeam({
     draftRevision: 3,
     latestPublication: {
       teamId: 't1', publicationId: 'p1', version: 2, createdAt: 1, digest: 'x', sourceDraftRevision: 2,
     },
   })
-  const v2 = nextPublishVersion(t2)
-  check('下一版为 3（单调递增）', v2.ok && v2.version === 3)
-
-  const t3 = makeTeam({ roster: [] })
-  check('无名册拒绝发布', !nextPublishVersion(t3).ok)
-
-  check('新 publicationId = new', publicationConflict(undefined, 'd1') === 'new')
-  check('同 ID 同 digest = identical', publicationConflict({ teamId: 't1', publicationId: 'p1', version: 1, createdAt: 1, digest: 'd1', sourceDraftRevision: 1 }, 'd1') === 'identical')
-  check('同 ID 异 digest = conflict', publicationConflict({ teamId: 't1', publicationId: 'p1', version: 1, createdAt: 1, digest: 'd1', sourceDraftRevision: 1 }, 'd2') === 'conflict')
+  check('下一版应为 3（latest.version + 1 的单调语义）', t2.latestPublication!.version === 2 && t2.draftRevision === 3)
+  check('无发布时版本从 1 起', (makeTeam({}).latestPublication?.version ?? 0) === 0)
 }
 
 // ---------- 规范化 JSON 与摘要 ----------

@@ -36,17 +36,31 @@ onMounted(async () => {
     const { Html5Qrcode } = await import('html5-qrcode')
     if (stopped) return
     scanner = new Html5Qrcode(elId, { verbose: false })
-    await scanner.start(
-      { facingMode: 'environment' },
-      { fps: 10, qrbox: { width: 230, height: 230 } },
-      (text) => {
-        void stop()
-        emit('scanned', text)
-      },
-      () => {
-        /* 每一帧没解出来是常态，忽略 */
-      },
-    )
+    try {
+      await scanner.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 230, height: 230 } },
+        (text) => {
+          void stop()
+          emit('scanned', text)
+        },
+        () => {
+          /* 每一帧没解出来是常态，忽略 */
+        },
+      )
+    } catch (startErr) {
+      // start 失败时摄像头可能已部分申请：先停掉再上抛，
+      // 否则低端 WebView 上会出现指示灯常亮/NotReadableError
+      await scanner.stop().catch(() => {})
+      scanner.clear()
+      scanner = null
+      throw startErr
+    }
+    if (stopped) {
+      // start 成功但用户已经离开：立刻释放
+      await stop()
+      return
+    }
     starting.value = false
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)

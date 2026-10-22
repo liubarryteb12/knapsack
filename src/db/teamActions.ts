@@ -638,7 +638,6 @@ export async function ingestPublication(input: IngestPublicationInput): Promise<
             name: `团队 ${input.teamId}`,
             myMemberId: input.memberId,
             draftRevision: 1,
-            revision: 1,
             latestPublication: {
               teamId: snap.teamId,
               publicationId: snap.publicationId,
@@ -792,7 +791,6 @@ export async function createTeam(input: {
     name: input.name,
     myMemberId: organizerId,
     draftRevision: 1,
-    revision: 1,
     roster: [{ memberId: organizerId, name: input.organizerName, role: 'organizer', joinedAt: now }],
     latestPublication: null,
     publicationHistory: [],
@@ -905,7 +903,6 @@ export interface TeamListItem {
   name: string
   myMemberId: string | null
   draftRevision: number
-  revision: number
   roster: TeamState['roster']
   items: Array<{ itemId: string }>
   allocations: Array<{ allocationId: string }>
@@ -924,7 +921,6 @@ export async function listTeamSummaries(): Promise<TeamListItem[]> {
       name: parsed.name,
       myMemberId: parsed.myMemberId,
       draftRevision: parsed.draftRevision,
-      revision: parsed.revision,
       roster: parsed.roster,
       // 列表只数个数，不需要完整对象
       items: parsed.items.map((i) => ({ itemId: i.itemId })),

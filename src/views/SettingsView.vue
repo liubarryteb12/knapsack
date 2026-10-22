@@ -19,9 +19,15 @@ onMounted(() => {
 })
 
 // ---- 模块开关：按旅行逐个配置 ----
-function toggleModule(trip: Trip, key: 'expenses' | 'notes', value: boolean) {
+async function toggleModule(trip: Trip, key: 'expenses' | 'notes', value: boolean) {
   trip.enabledModules[key] = value
-  tripsStore.saveTrip(trip)
+  try {
+    await tripsStore.saveTrip(trip)
+  } catch {
+    // 写库失败要把开关翻回去，否则界面显示与持久化状态不一致
+    trip.enabledModules[key] = !value
+    message.error('保存失败，开关已还原')
+  }
 }
 
 // ---- AI 配置 ----

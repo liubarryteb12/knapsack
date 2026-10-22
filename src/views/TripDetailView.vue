@@ -58,7 +58,7 @@ watch(tripId, async () => {
 
     <n-tabs v-model:value="tab" type="line" animated>
       <n-tab-pane name="timeline" tab="行程">
-        <WeatherStrip :trip="trip" />
+        <WeatherStrip :key="trip.id" :trip="trip" />
         <TimelineTab :trip="trip" />
       </n-tab-pane>
       <n-tab-pane v-if="trip.enabledModules.expenses" name="budget" tab="预算">

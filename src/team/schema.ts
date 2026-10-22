@@ -287,7 +287,6 @@ export const teamStateSchema = z.object({
   myMemberId: idSchema.nullable(),
   /** 草稿版本，编辑即递增；发布时检查 sourceDraftRevision 一致 */
   draftRevision: z.number().int().min(1),
-  revision: z.number().int().min(1),
   roster: z.array(teamMemberSchema).default([]),
   items: z.array(teamItemSchema).default([]),
   allocations: z.array(teamAllocationSchema).default([]),

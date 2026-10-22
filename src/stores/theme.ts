@@ -39,10 +39,15 @@ export const useThemeStore = defineStore('theme', () => {
     localStorage.setItem(STORAGE_KEY, next)
   })
 
+  // MediaQueryList 每次调用 matchMedia 都会新建，必须保存引用才能去重/移除。
+  // Pinia store 是单例，正常只有一份；HMR 重跑 setup 时先移除旧监听再挂新的。
   if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+    const mql = window.matchMedia('(prefers-color-scheme: dark)')
+    const onChange = (e: MediaQueryListEvent) => {
       systemDark.value = e.matches
-    })
+    }
+    mql.removeEventListener('change', onChange)
+    mql.addEventListener('change', onChange)
   }
 
   function setMode(next: ThemeMode) {

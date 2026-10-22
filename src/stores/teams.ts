@@ -98,7 +98,6 @@ function toListItem(t: TeamState): TeamListItem {
     name: t.name,
     myMemberId: t.myMemberId,
     draftRevision: t.draftRevision,
-    revision: t.revision,
     roster: t.roster,
     items: t.items.map((i) => ({ itemId: i.itemId })),
     allocations: t.allocations.map((a) => ({ allocationId: a.allocationId })),

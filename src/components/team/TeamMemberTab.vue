@@ -258,7 +258,12 @@ async function exportMyReports() {
     message.error('本机还没有绑定成员身份')
     return
   }
-  const mine = props.team.submissions.filter((s) => s.authorMemberId === mid)
+  // 只导出还有效的报告：stale/withdrawn 的内容已过时，组织者导入后
+  // 会占用审核列表还可能被误确认。confirmed/rejected 属于历史结论，
+  // 主机端按幂等键判重后不会产生副作用，一并带上便于对账。
+  const mine = props.team.submissions.filter(
+    (s) => s.authorMemberId === mid && s.review !== 'stale' && s.review !== 'withdrawn',
+  )
   if (mine.length === 0) {
     message.warning('还没有可导出的报告')
     return

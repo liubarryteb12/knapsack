@@ -12,9 +12,17 @@ const props = defineProps<{ trip: Trip }>()
 
 const weather = ref<Map<string, DayWeather> | null>(null)
 
+// 组件可能被快速切换（key 绑定 trip.id 时会整体重建，但编辑行程日期等
+// 场景会原地复用）：慢网络下旧请求晚返回会覆盖新数据。用自增序号
+// 只认最后一次发起的结果。
+let seq = 0
+
 onMounted(async () => {
+  const mySeq = ++seq
   const dates = props.trip.days.map((d) => d.date)
-  weather.value = await fetchWeather(props.trip.destCity, dates)
+  const result = await fetchWeather(props.trip.destCity, dates)
+  if (mySeq !== seq) return
+  weather.value = result
   // 失败/离线时 weather 为 null，整个区域 v-if 隐藏，不弹错
 })
 

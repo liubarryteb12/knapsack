@@ -30,7 +30,6 @@ function makeTeamState(teamId: string): TeamState {
     name: '事务测试团',
     myMemberId: 'org1',
     draftRevision: 1,
-    revision: 1,
     roster: [
       { memberId: 'org1', name: '甲', role: 'organizer', joinedAt: 1 },
       { memberId: 'm2', name: '乙', role: 'member', joinedAt: 2 },
