@@ -587,6 +587,109 @@ async function testStaleOnDraftBump() {
   const again = await saveTeam({ ...cur, draftRevision: cur.draftRevision })
   check('重复保存不改变 stale 状态', again.submissions.find((s) => s.submissionId === 'ST1')!.review === 'stale')
 }
+// ---------- SPEC 3.5：费用来源编号的作者独占性（防静默覆盖丢钱） ----------
+
+async function testExpenseReportIdOwnership() {
+  console.log('费用来源编号独占（SPEC 3.5 / A15）')
+  const { createTeam, saveTeam, acceptSubmission, decideSubmission, getTeam } = await import('../src/db/teamActions')
+
+  const base = await createTeam({ name: '独占团', organizerName: '甲' })
+  const team = await saveTeam({
+    ...base,
+    roster: [
+      { memberId: 'org1', name: '甲', role: 'organizer', joinedAt: 1 },
+      { memberId: 'm2', name: '乙', role: 'member', joinedAt: 2 },
+      { memberId: 'm3', name: '丙', role: 'member', joinedAt: 3 },
+    ],
+  })
+  const draft = (sid: string, author: string, fee: string, amt: number) => ({
+    submissionId: sid,
+    revision: 1,
+    teamId: team.teamId,
+    allocationId: 'a1',
+    stage: 'purchase' as const,
+    checkpointId: null,
+    taskRevision: team.draftRevision,
+    qty: 24,
+    amountFen: amt,
+    expenseReportId: fee,
+    payerMemberId: author,
+    relatedAllocationIds: ['a1'],
+    note: '买水',
+  })
+
+  const a1 = await acceptSubmission({ teamId: team.teamId, authorMemberId: 'm2', operationId: 'own-1', draft: draft('S-m2', 'm2', 'er-same', 3600) })
+  check('m2 建立费用来源 er-same', a1.ok)
+
+  // m3 复用同一个编号：必须拒绝，否则入账时会按 ID 覆盖，静默丢掉 m2 那笔
+  const a2 = await acceptSubmission({ teamId: team.teamId, authorMemberId: 'm3', operationId: 'own-2', draft: draft('S-m3', 'm3', 'er-same', 9900) })
+  check('他人复用费用来源编号被拒绝', !a2.ok && (a2.error ?? '').includes('其他成员'))
+
+  // 同一作者重传同一 submissionId：报的是 revision 规则，不是独占冲突
+  // （证明校验没有误伤自己的重试路径）
+  const a3 = await acceptSubmission({ teamId: team.teamId, authorMemberId: 'm2', operationId: 'own-3', draft: draft('S-m2', 'm2', 'er-same', 3600) })
+  check('同一作者重传不触发独占冲突', !(a3.error ?? '').includes('其他成员'))
+  check('同一作者重传按 revision 规则处理', !a3.ok && (a3.error ?? '').includes('revision'))
+
+  // 同一作者用新 submissionId + 同编号修订：同样不应触发独占冲突
+  const a4 = await acceptSubmission({ teamId: team.teamId, authorMemberId: 'm2', operationId: 'own-4', draft: draft('S-m2-r2', 'm2', 'er-same', 4000) })
+  check('同一作者换 submissionId 用同编号不触发独占冲突', a4.ok || !(a4.error ?? '').includes('其他成员'))
+
+  // 确认后账本里只有 m2 那笔，金额没被顶掉
+  await decideSubmission({ teamId: team.teamId, organizerMemberId: 'org1', operationId: 'own-d1', submissionId: 'S-m2', revision: 1, decision: 'confirmed' })
+  const after = await getTeam(team.teamId)
+  check('账本保留 m2 的 3600 分（未被 9900 覆盖）', after!.expenses.length === 1 && after!.expenses[0]!.amountFen === 3600)
+  check('作者与付款人都是 m2', after!.expenses[0]!.authorMemberId === 'm2' && after!.expenses[0]!.payerMemberId === 'm2')
+}
+
+// ---------- SPEC 3.5：正式数据校验成员存在 ----------
+
+async function testExpenseMemberValidation() {
+  console.log('费用入账成员校验（SPEC 3.5）')
+  const { createTeam, acceptSubmission, decideSubmission, getTeam } = await import('../src/db/teamActions')
+
+  const team = await createTeam({ name: '成员校验团', organizerName: '甲' })
+  const org = team.roster.find((m) => m.role === 'organizer')!.memberId
+
+  // 付款人不在名册
+  const bad = await acceptSubmission({
+    teamId: team.teamId,
+    authorMemberId: org,
+    operationId: 'mem-1',
+    draft: {
+      submissionId: 'M1', revision: 1, teamId: team.teamId, allocationId: 'a1',
+      stage: 'purchase', checkpointId: null, taskRevision: team.draftRevision,
+      qty: 24, amountFen: 3600, expenseReportId: 'er-ghost', payerMemberId: 'GHOST-USER',
+      relatedAllocationIds: ['a1'], note: '买水',
+    },
+  })
+  check('报告本身能接收（作者合法）', bad.ok)
+
+  const r = await decideSubmission({ teamId: team.teamId, organizerMemberId: org, operationId: 'mem-d1', submissionId: 'M1', revision: 1, decision: 'confirmed' })
+  check('确认被拒绝：付款人不在名册', !r.ok && (r.error ?? '').includes('名册'))
+
+  const after = await getTeam(team.teamId)
+  check('账本没有这条幽灵记录', after!.expenses.length === 0)
+
+  // 付款人留空 → 回退到作者（作者此时在名册，应放行）
+  const ok = await acceptSubmission({
+    teamId: team.teamId,
+    authorMemberId: org,
+    operationId: 'mem-2',
+    draft: {
+      submissionId: 'M2', revision: 1, teamId: team.teamId, allocationId: 'a1',
+      stage: 'purchase', checkpointId: null, taskRevision: team.draftRevision,
+      qty: 24, amountFen: 3600, expenseReportId: 'er-ok', payerMemberId: null,
+      relatedAllocationIds: ['a1'], note: '买水',
+    },
+  })
+  check('付款人为空时回退作者，可接收', ok.ok)
+  const r2 = await decideSubmission({ teamId: team.teamId, organizerMemberId: org, operationId: 'mem-d2', submissionId: 'M2', revision: 1, decision: 'confirmed' })
+  check('确认通过', r2.ok)
+  const after2 = await getTeam(team.teamId)
+  check('入账且付款人=作者', after2!.expenses.length === 1 && after2!.expenses[0]!.payerMemberId === org)
+  check('shares 总和等于金额', Object.values(after2!.expenses[0]!.shares).reduce((a, b) => a + b, 0) === 3600)
+}
 async function main() {
   await testA01()
   await testA12_A13()
@@ -594,6 +697,8 @@ async function main() {
   await testExpenseLedger()
   await testConfirmKeyUniqueness()
   await testStaleOnDraftBump()
+  await testExpenseReportIdOwnership()
+  await testExpenseMemberValidation()
   await testA34ProxyToPlain()
   if (failed > 0) {
     console.error(`\n${failed} 项失败`)

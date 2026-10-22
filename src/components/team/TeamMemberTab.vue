@@ -168,6 +168,13 @@ const submitting = ref(false)
 
 function openReport() {
   const first = myAssignments.value[0]
+  resetReportForm(first)
+  showReport.value = true
+}
+
+/** 打开或提交后都走这里：默认选中第一个任务，其余字段清空。
+ *  提交后不重置的话，下次打开会残留上次的批次/数量/金额，容易误重复上报。 */
+function resetReportForm(first?: { allocationId: string; stages: string[] }) {
   reportForm.value = {
     allocationId: first?.allocationId ?? '',
     stage: (first?.stages[0] as 'purchase' | 'carry' | 'count') ?? 'purchase',
@@ -176,7 +183,6 @@ function openReport() {
     amountYuan: '',
     note: '',
   }
-  showReport.value = true
 }
 
 const reportAllocOptions = computed(() =>
@@ -214,7 +220,10 @@ async function submit() {
       allocationId: f.allocationId,
       stage: f.stage,
       checkpointId: f.stage === 'count' ? f.checkpointId : null,
-      taskRevision: snapshot.value?.sourceDraftRevision ?? 1,
+      // 任务版本：优先用领取到的公共快照所依据的草稿版本；
+      // 还没领取过快照时退回本机 teamState 的 draftRevision。
+      // 不能再写死 1——那会让报告在组织者一改分工后就立刻被判 stale。
+      taskRevision: snapshot.value?.sourceDraftRevision ?? props.team.draftRevision,
       qty: f.qty,
       amountFen,
       expenseReportId: amountFen !== null ? newId() : null,
@@ -228,6 +237,7 @@ async function submit() {
       return
     }
     showReport.value = false
+    resetReportForm()
     message.success('已上报，等待组织者确认')
   } finally {
     submitting.value = false

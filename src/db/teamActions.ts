@@ -129,6 +129,18 @@ export async function acceptSubmission(
         throw new Error('作者不在名册中')
       }
 
+      // SPEC 3.5：expenseReportId 是「费用来源唯一键（作者维度稳定）」，
+      // 其他成员不能复用它修订。否则确认入账时按 expenseReportId 覆盖，
+      // 会把别人的费用记录静默顶掉，直接丢钱。
+      if (draft.expenseReportId) {
+        const owner = parsed.submissions.find(
+          (s) => s.expenseReportId === draft.expenseReportId,
+        )
+        if (owner && owner.authorMemberId !== input.authorMemberId) {
+          throw new Error('这个费用来源编号已被其他成员使用')
+        }
+      }
+
       const existing = parsed.submissions.find(
         (s) => s.submissionId === draft.submissionId,
       )
@@ -273,17 +285,25 @@ export async function decideSubmission(input: ConfirmDecisionInput): Promise<Con
           (s) => s.submissionId === input.submissionId && s.revision === input.revision,
         )
         if (target && target.amountFen !== null && target.expenseReportId) {
+          // SPEC 3.5：正式数据必须校验成员存在。付款人可以不是作者，
+          // 但必须是名册成员——否则账本里会出现幽灵付款人，结算时无人对应。
           const payerId = target.payerMemberId ?? target.authorMemberId
-          // 分摊默认按全体成员均分（余数给第一位）；总额等于金额，保证账目自洽
+          if (!parsed.roster.some((m) => m.memberId === payerId)) {
+            throw new Error(`实际付款人 ${payerId} 不在名册中，请先让成员加入`)
+          }
+
+          // 分摊默认按全体成员均分（余数给第一位）；总额等于金额，保证账目自洽。
+          // roster 为空时不应入账：均分不出任何份额，总额会是 0 ≠ amountFen。
           const memberIds = parsed.roster.map((m) => m.memberId)
+          if (memberIds.length === 0) {
+            throw new Error('名册为空，无法确定费用分摊')
+          }
           const shares: Record<string, number> = {}
-          if (memberIds.length > 0) {
-            const base = Math.floor(target.amountFen / memberIds.length)
-            let rest = target.amountFen - base * memberIds.length
-            for (const id of memberIds) {
-              shares[id] = base + (rest > 0 ? 1 : 0)
-              if (rest > 0) rest -= 1
-            }
+          const base = Math.floor(target.amountFen / memberIds.length)
+          let rest = target.amountFen - base * memberIds.length
+          for (const id of memberIds) {
+            shares[id] = base + (rest > 0 ? 1 : 0)
+            if (rest > 0) rest -= 1
           }
           const entry = {
             expenseReportId: target.expenseReportId,
@@ -376,13 +396,8 @@ export async function publishSnapshot(input: PublishInput): Promise<PublishResul
       const organizer = parsed.roster.find((m) => m.memberId === input.organizerMemberId)
       if (!organizer || organizer.role !== 'organizer') throw new Error('只有组织者能发布')
 
-      if (parsed.latestPublication && parsed.latestPublication.sourceDraftRevision !== input.expectedDraftRevision) {
-        // 注意：latest.sourceDraftRevision 与请求里的 expected 都可能过期；
-        // 严格规则：expected 必须等于当前 draftRevision（预览后未再编辑）
-        if (input.expectedDraftRevision !== parsed.draftRevision) {
-          throw new Error('草稿已变化，请重看预览后再发布')
-        }
-      }
+      // 严格规则：调用方看到的草稿版本必须等于当前 draftRevision，
+      // 否则说明预览之后又改过，不允许把未预览的变化偷偷混进这一版（SPEC 4.2）。
       if (input.expectedDraftRevision !== parsed.draftRevision) {
         throw new Error('草稿已变化，请重看预览后再发布')
       }

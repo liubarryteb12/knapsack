@@ -164,7 +164,7 @@
 | E24 | 2026-10-21 | A34 根因与修复（toPlain） | 根因：`TeamMemberTab.vue:295` `importPreview.value = check` 产生深层响应式 Proxy，`confirmImport` 把 Proxy 快照传给 `ingestPublication` → `db.teamPublications.put` structured clone 抛 DataCloneError；修复：`src/db/teamActions.ts` 新增 `toPlain()`，落地 ingestPublication/acceptSubmission/publishSnapshot(itinerary)；`scripts/test-team-db.ts` 新增 A34 回归段 | `npx tsx scripts/test-team-db.ts` exit 0，A34 回归 16 条断言全过（负对照：直接 put 代理快照确实抛 `DataCloneError: #<Object> could not be cloned`；修复后入库行 impurity 为空、JSON 逐字节一致、幂等语义不变）；`test-team-file.ts`/`test-team.ts` 无回归；`npx vue-tsc --noEmit` exit 0 | scripts/test-team-db.ts（新增用例） |
 | E25 | 2026-10-22 | 优化轮：逻辑键唯一性 + A08 stale + 金额纪律 + 死代码清理 | 根目录 `npx tsx scripts/test-team-db.ts`（退出码 0，79 行输出，含新增 15 条断言）；`npx vue-tsc --noEmit`（退出码 0）；`npm run build`（退出码 0，dist 产物正常）；7 个测试脚本全量回归（test-settle / test-tripfile / test-lansession / test-team / test-team-file / test-team-identity / test-team-db）全部退出码 0 | 修复前复现：同一逻辑键 2 条 confirmed、当前确认量随 reviewedAt 漂移；修复后唯一且确定 | scripts/test-team-db.ts（新增 testConfirmKeyUniqueness / testStaleOnDraftBump）、src/db/teamActions.ts、src/team/domain.ts、src/components/team/*.vue |
 | E26 | 2026-10-22 | 优化轮：金额输入边界验证 | 根目录临时探针 `npx tsx scripts/_probe*.ts`（已删除） | 旧 `Math.round(Number(x)*100)`：`abc`→NaN、`1.005`→100（脏值入库）；改用 yuanToFen 后全部返回 null 并给人话报错 | src/utils/money.ts（既有）、src/components/team/TeamMemberTab.vue |
-实施者从E03追加。失败也登记。E01、E02仅为文档记录，不能作为任何工序退出或验收通过的证据。不要粘贴含凭证/密钥的日志；无需创建大批冗余截图或报告，保留复现必要证据即可。
+| E27 | 2026-10-22 | 优化轮：费用来源独占 + 成员校验 + 冗余校验清理 + 上报表单 | 根目录 `npx tsx scripts/test-team-db.ts`（退出码 0，新增 testExpenseReportIdOwnership / testExpenseMemberValidation 共 11 条断言）；`npx vue-tsc --noEmit`（退出码 0）；`npm run build`（退出码 0）；7 个测试脚本全量回归全部退出码 0 | 修复前复现：m3 复用 m2 的 expenseReportId 后确认入账，m2 的 3600 分被 9900 分静默覆盖，账本少一笔钱；payerMemberId='GHOST-USER' 可入账。修复后均被拒绝 | scripts/test-team-db.ts、src/db/teamActions.ts、src/components/team/TeamMemberTab.vue |实施者从E03追加。失败也登记。E01、E02仅为文档记录，不能作为任何工序退出或验收通过的证据。不要粘贴含凭证/密钥的日志；无需创建大批冗余截图或报告，保留复现必要证据即可。
 
 ## 7. 实际变更登记
 
@@ -193,7 +193,10 @@
 | 2026-10-22 | 优化：digest 不重复计算 | src/db/teamActions.ts | 仅在补 itinerary 后重算快照摘要，省掉每次发布一次全量摘要 | — | 已实现，E25 |
 | 2026-10-22 | 优化：删恒 false 注入点 | src/team/domain.ts | 移除从未被调用的 setPendingCountChecker（模块级 pendingCountChecker 恒返回 false，却伪装成「待清点检测」）；改为显式 submissions 参数 + hasPendingCountReport | A07 | 已实现，E25 |
 | 2026-10-22 | 工程卫生：忽略调试产物 | .gitignore | scripts/out/（14.9MB 真机截图）不再进入 git status，避免误提交 | — | 已实现，E25 || 2026-10-21 | 闪退修复 P-a | android/…/TeamHostPlugin.java | accept 循环异常逃逸杀进程、shutdown 竞态、start 幂等不回写 sessionId、句柄泄漏 | R16、A17、A19 | 已实现，E21 |
-| 2026-10-21 | 闪退修复 P-b | src/team/teamHostService.ts、src/main.ts | 先 addListener 再 start（否则事件被 Capacitor 丢弃）；全局 errorHandler/unhandledrejection 记环形日志 | R16 | 已实现，E21 |
+| 2026-10-22 | 优化：费用来源编号独占 | src/db/teamActions.ts | acceptSubmission 校验 expenseReportId 未被其他成员使用。修复前：他人复用后确认入账会按 ID 覆盖，静默丢掉别人的费用记录（实测 3600 分被 9900 分顶掉） | A15、A24 | 已实现，E27 |
+| 2026-10-22 | 优化：费用入账成员校验 | src/db/teamActions.ts | decideSubmission 确认费用时校验 payerMemberId 在名册、名册非空（SPEC 3.5「正式数据校验成员存在」）。修复前幽灵付款人可入账 | A10、A24 | 已实现，E27 |
+| 2026-10-22 | 优化：删冗余嵌套校验 | src/db/teamActions.ts | publishSnapshot 里 draftRevision 被同一个条件检查了两遍（外层 if 内层与紧接着的独立 if 完全相同） | A12 | 已实现，E27 |
+| 2026-10-22 | 优化：上报任务版本与表单重置 | src/components/team/TeamMemberTab.vue | taskRevision 未领过快照时不再写死 1（会一改分工就变 stale），改用本机 draftRevision；上报成功后重置表单，避免下次打开残留导致误重复上报 | A08 | 已实现，E27 || 2026-10-21 | 闪退修复 P-b | src/team/teamHostService.ts、src/main.ts | 先 addListener 再 start（否则事件被 Capacitor 丢弃）；全局 errorHandler/unhandledrejection 记环形日志 | R16 | 已实现，E21 |
 | 2026-10-21 | 渲染进程自愈 | android/…/RendererRecovery.java（新增）、android/…/MainActivity.java | 渲染进程死亡后重建 Activity 并恢复 hash 路由，替代白屏 | R16 | 已实现，E23 |
 | 2026-10-21 | A34 修复 | src/db/teamActions.ts | 新增 toPlain()，写入 Dexie 前消除 Vue 响应式 Proxy（DataCloneError） | A34 | 已实现，E24 |
 | 2026-10-21 | P7 测试脚本 | scripts/p7-device-single.ts、p7-a22-restore.ts、p7-a28-restart.ts、p7-a30-offline.ts、p7-a34-file.ts、p7-a34-picker.ts、p7-a35-ui.ts、p7-e19-launch-race.ts、p7-crash-sweep.ts、scripts/lib/p7-*.ts | P7 单机验收自动化（CDP 驱动 WebView + adb 驱动选择器）与崩溃压测 | A22、A28、A30、A34、A35、E19、R16 | 已实现，E22–E25 |
