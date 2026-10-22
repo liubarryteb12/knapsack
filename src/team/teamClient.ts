@@ -350,3 +350,18 @@ export async function organizerTeamEdit(
   )
   return res.ok ? { ok: true } : { ok: false, error: res.error }
 }
+
+/** 撤回自己一条待审报告（SPEC 3.4 显式撤回请求） */
+export async function withdrawMyReport(
+  session: MemberSession,
+  submissionId: string,
+  revision: number,
+): Promise<{ ok: boolean; error?: string; replay?: boolean }> {
+  const res = await sendAction(
+    session,
+    'submission.withdraw',
+    { auth: authOf(session), submissionId, revision },
+    `withdraw-${submissionId}-`,
+  )
+  return res.ok ? { ok: true, replay: res.replay } : { ok: false, error: res.error }
+}

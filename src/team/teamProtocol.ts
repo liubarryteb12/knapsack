@@ -23,6 +23,7 @@ export type TeamActionName =
   | 'join.status'
   | 'assignment.fetch'
   | 'submission.submit'
+  | 'submission.withdraw'
   | 'submission.status'
   | 'submission.list'
   | 'publication.latest'

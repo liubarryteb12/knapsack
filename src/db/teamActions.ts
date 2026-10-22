@@ -347,18 +347,59 @@ export async function decideSubmission(input: ConfirmDecisionInput): Promise<Con
             throw new Error(`实际付款人 ${payerId} 不在名册中，请先让成员加入`)
           }
 
-          // 分摊默认按全体成员均分（余数给第一位）；总额等于金额，保证账目自洽。
+          // 分摊（SPEC 3.5）：报告带 split 时按其方式计算；缺省全员均分
+          // （余数给第一位）。总额必须等于金额，保证账目自洽。
           // roster 为空时不应入账：均分不出任何份额，总额会是 0 ≠ amountFen。
           const memberIds = parsed.roster.map((m) => m.memberId)
           if (memberIds.length === 0) {
             throw new Error('名册为空，无法确定费用分摊')
           }
           const shares: Record<string, number> = {}
-          const base = Math.floor(target.amountFen / memberIds.length)
-          let rest = target.amountFen - base * memberIds.length
-          for (const id of memberIds) {
-            shares[id] = base + (rest > 0 ? 1 : 0)
-            if (rest > 0) rest -= 1
+          if (target.split) {
+            if (target.split.mode === 'equal') {
+              const ids = target.split.memberIds
+              const n = ids.length
+              const base2 = Math.floor(target.amountFen / n)
+              let rest2 = target.amountFen - base2 * n
+              for (const id of ids) {
+                shares[id] = base2 + (rest2 > 0 ? 1 : 0)
+                if (rest2 > 0) rest2 -= 1
+              }
+            } else if (target.split.mode === 'shares') {
+              const ids = target.split.memberIds
+              const counts = target.split.shares
+              const total = counts.reduce((a, b) => a + b, 0)
+              if (total <= 0) throw new Error('按份分摊总份数必须大于 0')
+              for (let i = 0; i < ids.length; i++) {
+                const id = ids[i]
+                const cnt = counts[i]
+                if (id === undefined || cnt === undefined) continue
+                shares[id] = Math.floor((target.amountFen * cnt) / total)
+              }
+              const allocated = Object.values(shares).reduce((a, b) => a + b, 0)
+              const remainder = target.amountFen - allocated
+              if (remainder !== 0) {
+                const firstId = ids[0]
+                if (firstId === undefined) throw new Error('按份分摊缺少成员')
+                shares[firstId] = (shares[firstId] ?? 0) + remainder
+              }
+            } else {
+              for (const [id, fen] of Object.entries(target.split.amounts)) {
+                if (fen > 0) shares[id] = fen
+              }
+            }
+          } else {
+            const base = Math.floor(target.amountFen / memberIds.length)
+            let rest = target.amountFen - base * memberIds.length
+            for (const id of memberIds) {
+              shares[id] = base + (rest > 0 ? 1 : 0)
+              if (rest > 0) rest -= 1
+            }
+          }
+          // 总额自检：分摊结果必须恰好等于金额
+          const sharesTotal = Object.values(shares).reduce((a, b) => a + b, 0)
+          if (sharesTotal !== target.amountFen) {
+            throw new Error(`分摊总额 ${sharesTotal} 与费用金额 ${target.amountFen} 不一致`)
           }
           const entry = {
             expenseReportId: target.expenseReportId,
@@ -392,6 +433,16 @@ export async function decideSubmission(input: ConfirmDecisionInput): Promise<Con
         ...parsed,
         submissions: updatedSubs,
         expenses,
+        auditLog: [
+          ...parsed.auditLog,
+          {
+            id: newId(),
+            at: Date.now(),
+            actorMemberId: input.organizerMemberId,
+            action: (input.decision === 'confirmed' ? 'submission.confirm' : 'submission.reject') as 'submission.confirm' | 'submission.reject',
+            detail: `${input.decision === 'confirmed' ? '确认' : '退回'}报告 ${input.submissionId}#${input.revision}${input.note ? `（${input.note}）` : ''}`,
+          },
+        ],
         updatedAt: Date.now(),
       }
       await db.teamState.put(updated)
@@ -411,6 +462,101 @@ export async function decideSubmission(input: ConfirmDecisionInput): Promise<Con
         payloadDigest,
         result: res,
         createdAt: Date.now(),
+      })
+      return res
+    })
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+// ---------- 成员：撤回报告（SPEC 3.4 显式请求） ----------
+
+export interface WithdrawInput {
+  teamId: string
+  /** 作者从凭证推导，主机不采信自报 */
+  authorMemberId: string
+  operationId: string
+  submissionId: string
+  revision: number
+}
+
+export type WithdrawResult =
+  | { ok: true; submissionId: string; revision: number; replayed?: boolean }
+  | { ok: false; error: string }
+
+/**
+ * 成员撤回自己的一条报告（幂等）。
+ * 规则（SPEC 3.4「撤回已提交内容用显式请求」）：
+ * - 只能撤自己的；只有 submitted 状态可撤（confirmed/stale/rejected 是既成事实）；
+ * - 撤回是标记而非删除——review 变 withdrawn，行保留，可追溯。
+ */
+export async function withdrawSubmission(input: WithdrawInput): Promise<WithdrawResult> {
+  const payloadDigest = digestOf({
+    submissionId: input.submissionId,
+    revision: input.revision,
+  })
+  const key = idempotencyKey(input.teamId, input.authorMemberId, 'submission.withdraw', input.operationId)
+
+  try {
+    return await db.transaction('rw', db.teamState, db.teamIdempotency, async () => {
+      const outcome = await inTxIdempotent<WithdrawResult>(key, payloadDigest)
+      if (outcome.kind === 'replay') return { ...outcome.result, replayed: true }
+      if (outcome.kind === 'conflict') throw new Error('同 operationId 但内容不同')
+
+      const team = await db.teamState.get(input.teamId)
+      if (!team) throw new Error('团队不存在')
+      const parsed = teamStateSchema.parse(team)
+
+      const sub = parsed.submissions.find(
+        (s) => s.submissionId === input.submissionId && s.revision === input.revision,
+      )
+      if (!sub) throw new Error('未找到对应版本的报告')
+      if (sub.authorMemberId !== input.authorMemberId) {
+        throw new Error('只能撤回自己提交的报告')
+      }
+      if (sub.review !== 'submitted') {
+        throw new Error(`当前状态「${sub.review}」不能撤回（仅待审核状态可撤）`)
+      }
+
+      const now = Date.now()
+      const updatedSubs = parsed.submissions.map((s) =>
+        s.submissionId === input.submissionId && s.revision === input.revision
+          ? {
+              ...s,
+              review: 'withdrawn' as const,
+              reviewNote: s.reviewNote || '成员主动撤回',
+              reviewedAt: now,
+            }
+          : s,
+      )
+      const updated: TeamState = {
+        ...parsed,
+        submissions: updatedSubs,
+        auditLog: [
+          ...parsed.auditLog,
+          {
+            id: newId(),
+            at: now,
+            actorMemberId: input.authorMemberId,
+            action: 'submission.withdraw' as const,
+            detail: `撤回报告 ${input.submissionId}#${input.revision}`,
+          },
+        ],
+        updatedAt: now,
+      }
+      await db.teamState.put(updated)
+
+      const res: WithdrawResult = { ok: true, submissionId: input.submissionId, revision: input.revision }
+      await db.teamIdempotency.put({
+        idempotencyKey: key,
+        teamId: input.teamId,
+        actorMemberId: input.authorMemberId,
+        action: 'submission.withdraw',
+        operationId: input.operationId,
+        payloadDigest,
+        result: res,
+        createdAt: now,
       })
       return res
     })
@@ -518,6 +664,16 @@ export async function publishSnapshot(input: PublishInput): Promise<PublishResul
         ...parsed,
         latestPublication: meta,
         publicationHistory: [...parsed.publicationHistory, meta],
+        auditLog: [
+          ...parsed.auditLog,
+          {
+            id: newId(),
+            at: createdAt,
+            actorMemberId: input.organizerMemberId,
+            action: 'publication.publish' as const,
+            detail: `发布第 ${version} 版（来源 draftRevision ${parsed.draftRevision}）`,
+          },
+        ],
         updatedAt: createdAt,
       }
       await db.teamState.put(updated)
@@ -1113,6 +1269,16 @@ export async function approveJoin(input: ApproveJoinInput): Promise<ApproveJoinR
       const updated: TeamState = {
         ...parsed,
         roster,
+        auditLog: [
+          ...parsed.auditLog,
+          {
+            id: newId(),
+            at: Date.now(),
+            actorMemberId: input.organizerMemberId,
+            action: (restored ? 'join.rebind' : 'join.approve') as 'join.rebind' | 'join.approve',
+            detail: `${restored ? '恢复配对' : '批准加入'}：${join.memberName}（设备 ${join.deviceId}）`,
+          },
+        ],
         pendingJoins: parsed.pendingJoins.map((j) =>
           j.joinRequestId === input.joinRequestId
             ? { ...j, status: 'approved' as const, memberId, credential }
@@ -1146,6 +1312,16 @@ export async function rejectJoin(
         pendingJoins: parsed.pendingJoins.map((j) =>
           j.joinRequestId === joinRequestId ? { ...j, status: 'rejected' as const } : j,
         ),
+        auditLog: [
+          ...parsed.auditLog,
+          {
+            id: newId(),
+            at: Date.now(),
+            actorMemberId: organizerMemberId,
+            action: 'join.reject' as const,
+            detail: `拒绝加入申请 ${joinRequestId}`,
+          },
+        ],
         updatedAt: Date.now(),
       }
       await db.teamState.put(updated)

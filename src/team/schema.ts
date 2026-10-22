@@ -106,6 +106,29 @@ export const submissionSchema = z.object({
   /** 一笔费用可关联多批次，只追踪不重复计额 */
   relatedAllocationIds: z.array(idSchema).default([]),
   note: z.string().default(''),
+  /**
+   * 费用分摊方式（SPEC 3.5 三种之一）。费用报告（amountFen 非空）可带；
+   * 缺省 = 主机确认时按全体成员均分（余数给第一位）。
+   */
+  split: z
+    .discriminatedUnion('mode', [
+      z.object({
+        mode: z.literal('equal'),
+        memberIds: z.array(idSchema).min(1, '均分至少选择一名成员'),
+      }),
+      z.object({
+        mode: z.literal('shares'),
+        memberIds: z.array(idSchema).min(1),
+        shares: z.array(z.number().int().min(1)),
+      }).refine((s) => s.memberIds.length === s.shares.length, {
+        message: '份数与成员数量不一致',
+      }),
+      z.object({
+        mode: z.literal('custom'),
+        amounts: z.record(idSchema, z.number().int().min(0)),
+      }),
+    ])
+    .optional(),
   uploadedAt: z.number().int().nullable(),
   review: reviewStateSchema,
   reviewNote: z.string().default(''),
@@ -302,6 +325,21 @@ export const teamStateSchema = z.object({
   /** 主机侧待审批/已审批的加入申请 */
   pendingJoins: z.array(pendingJoinSchema).default([]),
   createdAt: z.number().int().min(0),
+  /** 业务日志（SPEC 5.1：关键确认、审批、发布、撤回、节点重开有持久记录）。
+   *  只记事实，不记密钥/凭证；随聚合根持久化，条数上限由写入方裁剪。 */
+  auditLog: z
+    .array(
+      z.object({
+        id: idSchema,
+        at: z.number().int().min(0),
+        /** 执行者 memberId；system 表示主机自动 */
+        actorMemberId: idSchema.nullable(),
+        action: z.enum(['join.approve', 'join.reject', 'join.rebind', 'submission.confirm', 'submission.reject', 'submission.withdraw', 'publication.publish']),
+        /** 人话摘要（不含密钥/凭证） */
+        detail: z.string(),
+      }),
+    )
+    .default([]),
   updatedAt: z.number().int().min(0),
 })
 

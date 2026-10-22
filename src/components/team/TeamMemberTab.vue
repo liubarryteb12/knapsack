@@ -26,6 +26,8 @@ import {
   sendReceipt,
   type MemberSession,
   organizerFetchState,
+  organizerApprove,
+  organizerPublish,
   organizerDecide,
 } from '../../team/teamClient'
 import { ingestPublication, clearOutbox, pendingOutbox, getTeam, latestPublicationOf } from '../../db/teamActions'
@@ -153,6 +155,53 @@ async function remoteReject(s: Submission) {
   message.success('已远程退回')
   await remoteRefresh()
 }
+// ---------- 远程审批加入 ----------
+const remoteApprovingId = ref<string | null>(null)
+
+const remotePendingJoinList = computed(() =>
+  (remoteState.value?.pendingJoins ?? []).filter((j) => j.status === 'pending'),
+)
+
+async function remoteDecideJoin(joinRequestId: string, decision: 'approved' | 'rejected') {
+  if (!session.value) return
+  remoteApprovingId.value = joinRequestId
+  try {
+    const res = await organizerApprove(session.value, joinRequestId, decision)
+    if (!res.ok) {
+      message.error(res.error ?? '审批失败')
+      return
+    }
+    message.success(decision === 'approved' ? '已通过加入申请' : '已拒绝加入申请')
+    await remoteRefresh()
+  } finally {
+    remoteApprovingId.value = null
+  }
+}
+
+// ---------- 远程发布 ----------
+const remotePublishing = ref(false)
+
+async function remotePublishVersion() {
+  if (!session.value || !remoteState.value) return
+  const cur = remoteState.value
+  const baseText = window.prompt(
+    `发布第 ${(cur.latestPublication?.version ?? 0) + 1} 版。\n请输入发布说明（可选，仅记录用）：`,
+    '',
+  )
+  if (baseText === null) return // 用户取消
+  remotePublishing.value = true
+  try {
+    const res = await organizerPublish(session.value, cur.draftRevision)
+    if (!res.ok) {
+      message.error(res.error ?? '发布失败')
+      return
+    }
+    message.success(`已远程发布第 ${res.version} 版，成员可领取`)
+    await remoteRefresh()
+  } finally {
+    remotePublishing.value = false
+  }
+}
 // ---------- 领取 ----------
 
 const claiming = ref(false)
@@ -229,9 +278,12 @@ const reportForm = ref({
   checkpointId: null as string | null,
   qty: 1,
   amountYuan: '' as string,
+  splitMode: 'equal' as 'equal' | 'custom',
+  customAmounts: {} as Record<string, string>,
   note: '',
 })
 const submitting = ref(false)
+const hasAmount = computed(() => reportForm.value.amountYuan.trim() !== '')
 
 function openReport() {
   const first = myAssignments.value[0]
@@ -248,6 +300,8 @@ function resetReportForm(first?: { allocationId: string; stages: string[] }) {
     checkpointId: null,
     qty: 1,
     amountYuan: '',
+    splitMode: 'equal',
+    customAmounts: {},
     note: '',
   }
 }
@@ -281,6 +335,16 @@ async function submit() {
       message.error('金额格式不对：请填两位小数以内的数字，例如 36.00')
       return
     }
+    // 自定义分摊（SPEC 3.5 custom）：按人填元，转整数分，只保留 >0 的
+    let customSplit: { mode: 'custom'; amounts: Record<string, number> } | undefined
+    if (amountFen !== null && f.splitMode === 'custom') {
+      const amounts: Record<string, number> = {}
+      for (const m of props.team.roster) {
+        const fen = Math.round(Number(f.customAmounts[m.memberId] ?? '0') * 100)
+        if (Number.isFinite(fen) && fen > 0) amounts[m.memberId] = fen
+      }
+      customSplit = { mode: 'custom', amounts }
+    }
     const draft = {
       submissionId: newId(),
       revision: 1,
@@ -294,9 +358,9 @@ async function submit() {
       qty: f.qty,
       amountFen,
       expenseReportId: amountFen !== null ? newId() : null,
+      ...(customSplit ? { split: customSplit } : {}),
+      ...(customSplit ? { split: customSplit } : {}),
       payerMemberId: null,
-      relatedAllocationIds: [f.allocationId],
-      note: f.note.trim(),
     }
     const res = await submitReport(session.value, draft, `submit-${draft.submissionId}`)
     if (!res.ok) {
@@ -510,6 +574,24 @@ async function refresh() {
         </div>
       </div>
     </n-card>
+      <div v-if="remoteState && remotePendingJoinList.length > 0" class="remote-sec">
+        <div class="sub-head"><strong>待审批加入</strong></div>
+        <div v-for="j in remotePendingJoinList" :key="j.joinRequestId" class="row sub-row">
+          <div class="grow">
+            <strong>{{ j.memberName }}</strong>
+          </div>
+          <n-button size="small" type="primary" :loading="remoteApprovingId === j.joinRequestId" @click="remoteDecideJoin(j.joinRequestId, 'approved')">通过</n-button>
+          <n-button size="small" :loading="remoteApprovingId === j.joinRequestId" @click="remoteDecideJoin(j.joinRequestId, 'rejected')">拒绝</n-button>
+        </div>
+      </div>
+      <div v-if="remoteState" style="margin-top: 8px">
+        <n-button type="primary" block :loading="remotePublishing" @click="remotePublishVersion">
+          发布第 {{ (remoteState.latestPublication?.version ?? 0) + 1 }} 版
+        </n-button>
+        <p class="muted small" style="margin-top: 4px">
+          发布会生成不可变公共快照，成员领取后回执自动记录。发布前请先确认所有待审报告。
+        </p>
+      </div>
     <!-- 我的任务 -->
     <n-card title="我的任务" size="small">
       <template #header-extra>
@@ -564,6 +646,18 @@ async function refresh() {
         <n-form-item label="花费（元，可选）">
           <n-input v-model:value="reportForm.amountYuan" placeholder="例如 36.00" />
         </n-form-item>
+        <n-form-item v-if="hasAmount" label="分摊方式">
+          <n-radio-group v-model:value="reportForm.splitMode">
+            <n-radio value="equal">全体均分</n-radio>
+            <n-radio value="custom">自定义金额</n-radio>
+          </n-radio-group>
+        </n-form-item>
+        <template v-if="hasAmount && reportForm.splitMode === 'custom'">
+          <n-form-item v-for="m in props.team.roster" :key="m.memberId" :label="m.name">
+            <n-input v-model:value="reportForm.customAmounts[m.memberId]" placeholder="0.00" />
+          </n-form-item>
+          <p class="muted small">自定义分摊合计必须等于花费金额。</p>
+        </template>
         <n-form-item label="备注">
           <n-input v-model:value="reportForm.note" type="textarea" :rows="2" />
         </n-form-item>

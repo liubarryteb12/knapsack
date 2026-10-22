@@ -39,6 +39,7 @@ import {
   rejectJoin,
   publishSnapshot,
   saveTeam,
+  withdrawSubmission,
 } from '../db/teamActions'
 import type { TeamState, PublicSnapshot } from './schema'
 
@@ -320,6 +321,16 @@ async function dispatchAction(envelope: TeamEnvelope, sessionClientPub?: string)
         authorMemberId: actor.memberId,
         operationId: envelope.operationId,
         draft: p.draft as never,
+      })
+      return res.ok ? toResponse(res) : errResponse(res.error)
+    }
+    case 'submission.withdraw': {
+      const res = await withdrawSubmission({
+        teamId,
+        authorMemberId: actor.memberId,
+        operationId: envelope.operationId,
+        submissionId: String(p.submissionId ?? ''),
+        revision: Number(p.revision ?? 0),
       })
       return res.ok ? toResponse(res) : errResponse(res.error)
     }
