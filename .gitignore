@@ -26,3 +26,10 @@ ios/App/Pods/
 # 本地打包产物（安装包不入库，按文档自行构建）
 release/
 *.exe
+
+# 本地 JDK 21 工具链（Capacitor 8 需要；系统 JDK 17 与 jbr 25 均不适用）
+.jdk21/
+.jdk21.zip
+
+# 真机调试截图与证据产物（不入库，按需本地查阅）
+scripts/out/
