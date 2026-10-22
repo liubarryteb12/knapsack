@@ -38,6 +38,18 @@ onMounted(async () => {
   await teams.refresh(teamId.value)
 })
 
+// 同组件复用（列表页点另一个团队、或深链切换 teamId）时 onMounted 不会重跑，
+// 不 watch 的话页面会一直显示上一个团队的查找结果（真机验证踩到：
+// org 详情 → mem 详情 显示「找不到这个团队」）。
+watch(
+  () => teamId.value,
+  async (id, prev) => {
+    if (!id || id === prev) return
+    if (!teams.loaded) await teams.load()
+    await teams.refresh(id)
+  },
+)
+
 // 会话在离开页面时停止（第一版前台会话，SPEC 7.3）
 watch(
   () => route.fullPath,
