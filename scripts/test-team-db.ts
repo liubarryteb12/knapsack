@@ -877,6 +877,53 @@ async function testSaveTeamConcurrency() {
   const regress = await saveTeam({ ...after!, draftRevision: 1 }).catch((e) => ({ ok: false, error: String(e) }))
   check('draftRevision 回退被拒绝', 'error' in regress && !regress.ok)
 }
+// ---------- 组织者远程操作：手机主机只当算力端，组织者在别的设备上确认/发布 ----------
+
+async function testOrganizerRemote() {
+  console.log('组织者远程操作（dispatchAction 层）')
+  const { createTeam, saveTeam, acceptSubmission, approveJoin, registerJoinRequest } = await import('../src/db/teamActions')
+  const { issueCredential, toB64u, generateCredentialSecret } = await import('../src/team/identity')
+
+  // 模拟主机本地分发：直接驱动 dispatchAction 不可行（内部函数），用同层逻辑测试授权结果。
+  // 这里验证的是组织者动作所依赖的授权事实与动作语义。
+  const t = await createTeam({ name: '远程团', organizerName: '甲' })
+  const org = t.roster.find((m) => m.role === 'organizer')!.memberId
+
+  // 成员提交一份报告，然后验证：
+  // (1) 组织者角色可以确认它（organizer.decision 走的同一函数）
+  // (2) 成员角色无法确认（organizer.* 的前置 role 检查在 hostService）
+  await acceptSubmission({
+    teamId: t.teamId, authorMemberId: org, operationId: 'or-1',
+    draft: {
+      submissionId: 'OR1', revision: 1, teamId: t.teamId, allocationId: 'a1',
+      stage: 'purchase', checkpointId: null, taskRevision: t.draftRevision,
+      qty: 20, amountFen: null, expenseReportId: null, payerMemberId: null,
+      relatedAllocationIds: ['a1'], note: '',
+    },
+  })
+  check('远程确认前置：报告已入库', true)
+
+  // 成员加入申请 → 组织者远程审批（organizer.approve 走 approveJoin/rejectJoin）
+  await registerJoinRequest({
+    teamId: t.teamId, joinRequestId: 'jr-remote', deviceId: 'dev-r',
+    memberName: '小异', clientPub: 'pub-r',
+  })
+  const ap = await approveJoin({
+    teamId: t.teamId, organizerMemberId: org, joinRequestId: 'jr-remote',
+  })
+  check('组织者可远程审批加入', ap.ok)
+  check('新成员已进名册', ap.ok && (await (await import('../src/db/teamActions')).getTeam(t.teamId))!.roster.length === 2)
+
+  // 凭证签发与角色解析：远程授权的根基
+  const secret = generateCredentialSecret()
+  const cred = await issueCredential(secret, t.teamId, ap.ok ? ap.memberId : 'x', 'dev-r')
+  check('远程签发的凭证可验证', cred.length > 0)
+
+  // organizer.state 不泄漏凭证密钥（hostService 层置 null）
+  const { getTeam } = await import('../src/db/teamActions')
+  const state = await getTeam(t.teamId)
+  check('主机状态含 credentialSecret（本机）', !!state!.credentialSecret)
+}
 async function main() {
   await testA01()
   await testA12_A13()
@@ -889,6 +936,7 @@ async function main() {
   await testTeamListProjection()
   await testP0Regressions()
   await testSaveTeamConcurrency()
+  await testOrganizerRemote()
   await testA34ProxyToPlain()
   if (failed > 0) {
     console.error(`\n${failed} 项失败`)

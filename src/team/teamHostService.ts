@@ -26,8 +26,21 @@ import {
   type Bytes,
 } from './identity'
 import { okResponse, errResponse, type TeamEnvelope, type TeamResponse } from './teamProtocol'
-import { acceptSubmission, acceptReceipt, latestPublicationOf, registerJoinRequest, getJoinStatus, resolveActor } from '../db/teamActions'
-import type { TeamState } from './schema'
+import {
+  acceptSubmission,
+  acceptReceipt,
+  latestPublicationOf,
+  registerJoinRequest,
+  getJoinStatus,
+  resolveActor,
+  getTeam,
+  decideSubmission,
+  approveJoin,
+  rejectJoin,
+  publishSnapshot,
+  saveTeam,
+} from '../db/teamActions'
+import type { TeamState, PublicSnapshot } from './schema'
 
 export interface RunningTeamSession {
   sessionId: string
@@ -228,8 +241,75 @@ async function dispatchAction(envelope: TeamEnvelope, sessionClientPub?: string)
     return r
   }
 
+      // ---- 组织者专用动作：role 由凭证推导，成员冒充直接被拒 ----
+  if (envelope.type.startsWith('organizer.')) {
+    if (actor.role !== 'organizer') {
+      return errResponse('只有组织者能执行这个操作')
+    }
+    switch (envelope.type) {
+      case 'organizer.state': {
+        const t = await getTeam(teamId)
+        if (!t) return errResponse('团队不存在')
+        return okResponse({ team: { ...t, credentialSecret: null } })
+      }
+      case 'organizer.decision': {
+        const res = await decideSubmission({
+          teamId,
+          organizerMemberId: actor.memberId,
+          operationId: envelope.operationId,
+          submissionId: String(p.submissionId ?? ''),
+          revision: Number(p.revision ?? 0),
+          decision: p.decision === 'rejected' ? 'rejected' : 'confirmed',
+          note: typeof p.note === 'string' ? p.note : undefined,
+        })
+        return res.ok ? toResponse(res) : errResponse(res.error)
+      }
+      case 'organizer.approve': {
+        if (p.decision === 'rejected') {
+          const rej = await rejectJoin(
+            teamId,
+            actor.memberId,
+            String(p.joinRequestId ?? ''),
+          )
+          return rej.ok ? toResponse(rej) : errResponse(rej.error)
+        }
+        const res = await approveJoin({
+          teamId,
+          organizerMemberId: actor.memberId,
+          joinRequestId: String(p.joinRequestId ?? ''),
+          restoreMemberId:
+            typeof p.restoreMemberId === "string" && p.restoreMemberId
+              ? p.restoreMemberId
+              : undefined,
+        })
+        return res.ok ? toResponse(res) : errResponse(res.error)
+      }
+      case 'organizer.publish': {
+        const res = await publishSnapshot({
+          teamId,
+          organizerMemberId: actor.memberId,
+          operationId: envelope.operationId,
+          expectedDraftRevision: Number(p.expectedDraftRevision ?? 0),
+          expectedPreviewDigest:
+            typeof p.expectedPreviewDigest === 'string' ? p.expectedPreviewDigest : undefined,
+          itinerary: p.itinerary as PublicSnapshot['itinerary'] | undefined,
+        })
+        return res.ok ? toResponse(res) : errResponse(res.error)
+      }
+      case 'organizer.teamEdit': {
+        const draft = p.team as TeamState | undefined
+        if (!draft || draft.teamId !== teamId) return errResponse('编辑载荷缺少团队标识')
+        const res = await saveTeam({ ...draft, draftRevision: Number(p.draftRevision ?? draft.draftRevision ?? 0) })
+        return toResponse({ ok: true, team: { ...res, credentialSecret: null } })
+      }
+      default:
+        return errResponse('未知组织者动作')
+    }
+  }
+
   switch (envelope.type) {
-    case 'publication.latest': {
+
+  case 'publication.latest': {
       const snap = await latestPublicationOf(teamId)
       return okResponse({ snapshot: snap ?? null })
     }

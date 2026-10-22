@@ -27,7 +27,7 @@ import {
 import { makeEnvelope, type TeamEnvelope, type TeamActionName, type TeamResponse } from './teamProtocol'
 import { getTeamLink, putTeamLink } from '../db/teamActions'
 import type { TeamLink } from '../db/teamSchema'
-import type { PublicSnapshot } from './schema'
+import type { PublicSnapshot, TeamState } from './schema'
 
 export interface MemberSession {
   ticket: HostSessionTicket
@@ -267,4 +267,86 @@ let opSeq = 0
 function opId(prefix: string): string {
   opSeq++
   return `${prefix}-${Date.now().toString(36)}-${opSeq}`
+}
+// ---------- 组织者远程操作（手机主机放家里，人在其他设备上汇总） ----------
+//
+// 组织者用自己的成员凭证接入任意一台主机（不一定是自己的手机），
+// 主机侧 dispatchAction 对 organizer.* 动作校验 role=organizer 后
+// 代为执行本地事务。所有授权都走既有凭证链路，无新增密码学面。
+
+/** 拉取完整团队状态（待审列表、缺口、名册、发布历史） */
+export async function organizerFetchState(
+  session: MemberSession,
+): Promise<{ ok: boolean; team?: TeamState; error?: string }> {
+  const res = await sendAction(session, 'organizer.state', { auth: authOf(session) }, opId('ostate'))
+  if (!res.ok) return { ok: false, error: res.error }
+  return { ok: true, team: (res.result as { team: TeamState }).team }
+}
+
+/** 确认/退回一条报告 */
+export async function organizerDecide(
+  session: MemberSession,
+  submissionId: string,
+  revision: number,
+  decision: 'confirmed' | 'rejected',
+  note?: string,
+): Promise<{ ok: boolean; error?: string; replay?: boolean }> {
+  const res = await sendAction(
+    session,
+    'organizer.decision',
+    { auth: authOf(session), submissionId, revision, decision, note },
+    `remote-confirm-${submissionId}-${revision}`,
+  )
+  return res.ok ? { ok: true, replay: res.replay } : { ok: false, error: res.error }
+}
+
+/** 审批/拒绝加入申请；restoreMemberId 用于恢复配对 */
+export async function organizerApprove(
+  session: MemberSession,
+  joinRequestId: string,
+  decision: 'approved' | 'rejected',
+  restoreMemberId?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await sendAction(
+    session,
+    'organizer.approve',
+    {
+      auth: authOf(session),
+      joinRequestId,
+      decision,
+      restoreMemberId,
+    },
+    `remote-approve-${joinRequestId}`,
+  )
+  return res.ok ? { ok: true } : { ok: false, error: res.error }
+}
+
+/** 发布不可变快照（expectedPreviewDigest 保证发布内容与预览一致） */
+export async function organizerPublish(
+  session: MemberSession,
+  expectedDraftRevision: number,
+  expectedPreviewDigest?: string,
+): Promise<{ ok: boolean; version?: number; error?: string }> {
+  const res = await sendAction(
+    session,
+    'organizer.publish',
+    { auth: authOf(session), expectedDraftRevision, expectedPreviewDigest },
+    `remote-publish-${Date.now().toString(36)}`,
+  )
+  if (!res.ok) return { ok: false, error: res.error }
+  return { ok: true, version: (res.result as { version: number }).version }
+}
+
+/** 整包保存团队草稿（saveTeam 的读-改-写守卫在主机侧执行） */
+export async function organizerTeamEdit(
+  session: MemberSession,
+  team: TeamState,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await sendAction(
+    session,
+    'organizer.teamEdit',
+    { auth: authOf(session), team, draftRevision: team.draftRevision },
+    `remote-edit-${team.draftRevision}-${Date.now().toString(36)}`,
+  )
+  return res.ok ? { ok: true } : { ok: false, error: res.error }
 }

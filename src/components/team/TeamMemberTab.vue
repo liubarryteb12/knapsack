@@ -25,6 +25,8 @@ import {
   submitReport,
   sendReceipt,
   type MemberSession,
+  organizerFetchState,
+  organizerDecide,
 } from '../../team/teamClient'
 import { ingestPublication, clearOutbox, pendingOutbox, getTeam, latestPublicationOf } from '../../db/teamActions'
 import { serializeSubmissionFile, submissionFileName, checkPublicImport, type PublicImportCheck } from '../../team/teamFile'
@@ -32,8 +34,8 @@ import { saveTextFile, pickTextFile } from '../../utils/fileBridge'
 import { canScan } from '../../utils/lanSessionScan'
 import QrScanner from '../QrScanner.vue'
 import { newId } from '../../team/protocol'
-import { yuanToFen } from '../../utils/money'
-import type { TeamState, PublicSnapshot } from '../../team/schema'
+import { yuanToFen, fenToYuan } from '../../utils/money'
+import type { TeamState, PublicSnapshot, Submission } from '../../team/schema'
 
 const props = defineProps<{ team: TeamState }>()
 const emit = defineEmits<{ (e: 'changed'): void }>()
@@ -69,6 +71,8 @@ async function connect(code?: string) {
     session.value = await connectAsMember(text)
     ticket.value = text
     message.success('已连上组织者主机')
+    // 组织者角色连上后自动拉一次远程状态，立即可操作
+    if (me.value?.role === 'organizer') void remoteRefresh()
   } catch (e) {
     message.error(e instanceof Error ? e.message : String(e))
   } finally {
@@ -86,6 +90,69 @@ function onScanError(msg: string) {
   message.error(`扫码失败：${msg}（可改用手动粘贴会话码）`)
 }
 
+// ---------- 组织者远程操作 ----------
+// 设计：手机主机放家里只当算力端（存储 + 会话），组织者拿着会话码
+// 从任意设备接入，确认/审批/发布都通过 organizer.* 动作在主机上执行。
+
+const connectedAsOrganizer = computed(() => {
+  return me.value?.role === 'organizer' && !!session.value
+})
+
+const remoteState = ref<TeamState | null>(null)
+const remoteLoading = ref(false)
+const remoteConfirming = ref<string | null>(null)
+
+const remotePendingSubs = computed(() =>
+  (remoteState.value?.submissions ?? []).filter((s) => s.review === 'submitted'),
+)
+const remotePendingCount = computed(() => remotePendingSubs.value.length)
+const remotePendingJoins = computed(
+  () => (remoteState.value?.pendingJoins ?? []).filter((j) => j.status === 'pending').length,
+)
+const remoteVersion = computed(() => remoteState.value?.latestPublication?.version ?? 0)
+
+async function remoteRefresh() {
+  if (!session.value) return
+  remoteLoading.value = true
+  try {
+    const res = await organizerFetchState(session.value)
+    if (!res.ok) {
+      message.error(res.error ?? '拉取远程状态失败')
+      return
+    }
+    remoteState.value = res.team ?? null
+  } finally {
+    remoteLoading.value = false
+  }
+}
+
+async function remoteConfirm(s: Submission) {
+  if (!session.value) return
+  remoteConfirming.value = s.submissionId
+  try {
+    const res = await organizerDecide(session.value, s.submissionId, s.revision, 'confirmed')
+    if (!res.ok) {
+      message.error(res.error ?? '确认失败')
+      return
+    }
+    message.success(res.replay ? '此前已确认过（幂等重放）' : '已远程确认')
+    await remoteRefresh()
+  } finally {
+    remoteConfirming.value = null
+  }
+}
+
+async function remoteReject(s: Submission) {
+  if (!session.value) return
+  const note = window.prompt('退回原因（可留空）') ?? ''
+  const res = await organizerDecide(session.value, s.submissionId, s.revision, 'rejected', note)
+  if (!res.ok) {
+    message.error(res.error ?? '退回失败')
+    return
+  }
+  message.success('已远程退回')
+  await remoteRefresh()
+}
 // ---------- 领取 ----------
 
 const claiming = ref(false)
@@ -415,6 +482,34 @@ async function refresh() {
       </p>
     </n-card>
 
+
+    <!-- 组织者远程操作：连接的主机上我是组织者时显示 -->
+    <n-card v-if="connectedAsOrganizer" title="组织者操作（远程主机）" size="small">
+      <p class="muted small">
+        手机主机只负责存储与会话；确认报告、审批加入、发布版本都在这里远程完成。
+      </p>
+      <div class="head-actions" style="margin-bottom: 8px">
+        <n-button size="small" :loading="remoteLoading" @click="remoteRefresh">
+          <template #icon><RefreshCw :size="14" /></template>
+          刷新远程状态
+        </n-button>
+      </div>
+      <p v-if="remoteState" class="muted small">
+        远程待审核 {{ remotePendingCount }} 条 · 待审批 {{ remotePendingJoins }} 条 · 已发布第 {{ remoteVersion }} 版
+      </p>
+      <p v-else class="muted small">尚未拉取远程状态。</p>
+      <div v-if="remoteState && remotePendingCount > 0" class="remote-sec">
+        <div class="sub-head"><strong>待审核报告</strong></div>
+        <div v-for="s in remotePendingSubs" :key="s.submissionId" class="row sub-row">
+          <div class="grow">
+            <span class="num">{{ s.qty !== null ? s.qty : (s.amountFen !== null ? `¥${fenToYuan(s.amountFen)}` : "—") }}</span>
+            <span class="muted small"> {{ s.note }}</span>
+          </div>
+          <n-button size="small" type="primary" :loading="remoteConfirming === s.submissionId" @click="remoteConfirm(s)">确认</n-button>
+          <n-button size="small" @click="remoteReject(s)">退回</n-button>
+        </div>
+      </div>
+    </n-card>
     <!-- 我的任务 -->
     <n-card title="我的任务" size="small">
       <template #header-extra>
