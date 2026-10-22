@@ -86,7 +86,7 @@
 | R13 | 多版本费用/节点确认和发布并发 | 高 | 事务、草稿revision、不变历史 | 已关闭（E04） |
 | R14 | Android文件下载不落到可见文件 | 高 | 实际分享/保存和选择往返 | 部分关闭：保存/分享真机通过（E18）；系统选择往返待手测 |
 | R15 | android 工程存在重复的原生插件实现：根包 TeamHostPlugin.java（已注册、已验证）与未引用的 teamhost/ 包（基于 NanoHTTPD，另有 nanohttpd 依赖） | 中 | 确认无人引用后清理，避免下次接手误改 | 已关闭（用户授权删除；teamhost/ 目录与 nanohttpd 依赖已删，重建装机通过，E20） |
-| R16 | 「闪退」根因：内存压力下（PSS ≈200MB，打开系统分享面板时）WebView **渲染进程**被系统杀掉（`E/chromium aw_browser_terminator.cc(156) Renderer process crash detected (code -1)`），应用进程存活但 WebView 报废 → 白屏，用户感知为闪退；Capacitor 默认 `BridgeWebViewClient.onRenderProcessGone` 无 listener 时 return false，不做兜底 | 高 | 渲染进程死亡必须自愈（重建 Activity + 恢复路由）；同时降低峰值内存 | 部分关闭：自愈已实现并实测（E23）；2026-10-22 已做一轮 JS 侧降载（E28：缺口表 22x、列表投影 -93%），真机 PSS 复测仍待用户手动跑 |
+| R16 | 「闪退」根因：内存压力下（PSS ≈200MB，打开系统分享面板时）WebView **渲染进程**被系统杀掉（`E/chromium aw_browser_terminator.cc(156) Renderer process crash detected (code -1)`），应用进程存活但 WebView 报废 → 白屏，用户感知为闪退；Capacitor 默认 `BridgeWebViewClient.onRenderProcessGone` 无 listener 时 return false，不做兜底 | 高 | 渲染进程死亡必须自愈（重建 Activity + 恢复路由）；同时降低峰值内存 | 未关闭：自愈已实现并实测（E23）；2026-10-22 JS 侧降载（E28：缺口表 22x、列表投影 -93%）经真机 A/B 复测（E29）**对 PSS 无显著影响**（-1.3%，噪声内）。说明 PSS 大头是 WebView 引擎与原生库，JS 堆占比极小（实测 200 旅行列表 0.1MB、大团队快照 2.7MB）。下一步需转向原生侧（WebView 版本/硬件加速/进程模型）或接受现状靠自愈兜底 |
 | R17 | 真机 WebView 版本 116.0.5845.92（2023 年内核），远低于 Capacitor 8 文档建议的 140 分界；老内核内存管理与兼容性风险不可控 | 中 | 登记环境差异；升级系统 WebView 后复测；代码侧不依赖新内核特性 | 未处理（环境限制，非本仓库可修） |
 
 风险关闭需填写修复位置和证据ID；不能仅因写了规格就关闭。
@@ -166,7 +166,7 @@
 | E26 | 2026-10-22 | 优化轮：金额输入边界验证 | 根目录临时探针 `npx tsx scripts/_probe*.ts`（已删除） | 旧 `Math.round(Number(x)*100)`：`abc`→NaN、`1.005`→100（脏值入库）；改用 yuanToFen 后全部返回 null 并给人话报错 | src/utils/money.ts（既有）、src/components/team/TeamMemberTab.vue |
 | E27 | 2026-10-22 | 优化轮：费用来源独占 + 成员校验 + 冗余校验清理 + 上报表单 | 根目录 `npx tsx scripts/test-team-db.ts`（退出码 0，新增 testExpenseReportIdOwnership / testExpenseMemberValidation 共 11 条断言）；`npx vue-tsc --noEmit`（退出码 0）；`npm run build`（退出码 0）；7 个测试脚本全量回归全部退出码 0 | 修复前复现：m3 复用 m2 的 expenseReportId 后确认入账，m2 的 3600 分被 9900 分静默覆盖，账本少一笔钱；payerMemberId='GHOST-USER' 可入账。修复后均被拒绝 | scripts/test-team-db.ts、src/db/teamActions.ts、src/components/team/TeamMemberTab.vue |实施者从E03追加。失败也登记。E01、E02仅为文档记录，不能作为任何工序退出或验收通过的证据。不要粘贴含凭证/密钥的日志；无需创建大批冗余截图或报告，保留复现必要证据即可。
 | E28 | 2026-10-22 | 优化轮：内存与重复计算（R16 收尾） | 根目录基准脚本（300 批次/300 报告缺口总表 10 次重渲染：模板现算 37.1ms vs computed 预计算 1.70ms，22x；单团队聚合根 133.6KB vs 列表投影 9.3KB，-93.1%）；`npx tsx scripts/test-team-db.ts` 退出码 0（新增 testTeamListProjection 9 条断言）；`npx vue-tsc --noEmit` 退出码 0；`npm run build` 退出码 0；7 个测试脚本全量回归全部退出码 0 | 修复前：TripsView 模板每卡 3–4 次 reduce；TeamSummaryTab 每单元格 5 轮 submissions 遍历；团队列表页把每个团队的完整聚合根搬进内存 | src/views/TripsView.vue、src/components/team/TeamSummaryTab.vue、src/db/teamActions.ts、src/stores/teams.ts、src/views/TeamsView.vue、src/components/LanSessionModal.vue、src/components/team/TeamPublishTab.vue |
-## 7. 实际变更登记
+| E29 | 2026-10-22 | R16 真机 PSS A/B 复测（阴性结果） | 设备 3a3e1f52（小米 M2012K11AC / Android 13 / WebView 116.0.5845.92）；流程：构建 before(c9dd40b) 与 after(abc2449) 两个 APK → 校验 dex/res 完全一致（dex 8911KB / res 1109KB，确认 Java 层相同、仅前端资产不同）→ 交替安装 + force-stop + `npx --no-install tsx scripts/p7-crash-sweep.ts --only=session-start-stop-x5`，每轮约 20s | before 154347/157290 KB（均值 152.2 MB），after 154737/152822 KB（均值 150.2 MB）；差异 -2.0 MB / -1.3%，落在测量噪声内。崩溃信号 0、JS 异常 0。**结论：E28 的 JS 侧降载对 PSS 无显著影响** | scripts/out/p7-crash-2026-10-22T07-28-35.json、07-29-31.json（before）；另两次 A/B 输出见命令行 |## 7. 实际变更登记
 
 | 日期 | 工序 | 文件 | 变更目的 | 关联验收 | 状态 |
 | --- | --- | --- | --- | --- | --- |
