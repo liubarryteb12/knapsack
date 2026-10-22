@@ -1,19 +1,28 @@
 import { defineStore } from 'pinia'
 import {
   createTeam as createTeamDb,
-  listTeams,
+  listTeamSummaries,
   getTeam,
   saveTeam,
   getTeamLink,
   pendingOutbox,
 } from '../db/teamActions'
 import type { TeamState } from '../team/schema'
+import type { TeamListItem } from '../db/teamActions'
 import type { TeamLink, TeamOutboxEntry } from '../db/teamSchema'
 
 /** 团队 store：缓存团队聚合与配对信息；写操作委托 db/teamActions 的事务 */
+/**
+ * teams：已打开过详情的团队，存完整聚合根（编辑/确认/发布都从这里读）。
+ * teamList：列表页投影，只有展示字段（teamId/name/roster/各计数/发布状态）。
+ *
+ * 分开存是为了避免列表页把每个团队的 submissions/expenses 全搬进内存，
+ * 而进详情又会再取一份完整聚合根——同一份数据存两遍。
+ */
 export const useTeamsStore = defineStore('teams', {
   state: () => ({
     teams: [] as TeamState[],
+    teamList: [] as TeamListItem[],
     links: {} as Record<string, TeamLink | null>,
     outbox: {} as Record<string, TeamOutboxEntry[]>,
     loaded: false,
@@ -37,9 +46,9 @@ export const useTeamsStore = defineStore('teams', {
 
   actions: {
     async load() {
-      this.teams = await listTeams()
+      this.teamList = await listTeamSummaries()
       const links: Record<string, TeamLink | null> = {}
-      for (const t of this.teams) {
+      for (const t of this.teamList) {
         links[t.teamId] = (await getTeamLink(t.teamId)) ?? null
       }
       this.links = links
@@ -49,6 +58,7 @@ export const useTeamsStore = defineStore('teams', {
     async create(name: string, organizerName: string): Promise<TeamState> {
       const t = await createTeamDb({ name, organizerName })
       this.teams.push(t)
+      this.teamList.push(toListItem(t))
       return t
     },
 
@@ -80,3 +90,21 @@ export const useTeamsStore = defineStore('teams', {
     },
   },
 })
+
+/** 完整聚合根 → 列表投影。与 listTeamSummaries 的字段保持一致。 */
+function toListItem(t: TeamState): TeamListItem {
+  return {
+    teamId: t.teamId,
+    name: t.name,
+    myMemberId: t.myMemberId,
+    draftRevision: t.draftRevision,
+    revision: t.revision,
+    roster: t.roster,
+    items: t.items.map((i) => ({ itemId: i.itemId })),
+    allocations: t.allocations.map((a) => ({ allocationId: a.allocationId })),
+    checkpoints: t.checkpoints.map((c) => ({ checkpointId: c.checkpointId })),
+    latestPublication: t.latestPublication,
+    createdAt: t.createdAt,
+    updatedAt: t.updatedAt,
+  }
+}

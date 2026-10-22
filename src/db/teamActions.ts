@@ -729,6 +729,54 @@ export async function listTeams(): Promise<TeamState[]> {
   return all.map((t) => teamStateSchema.parse(t))
 }
 
+/**
+ * 团队列表用的轻量投影。
+ *
+ * 列表页只需要团队名、名册规模、物资/节点计数和发布状态，
+ * 但 TeamState 里还塞着 submissions / expenses / pendingJoins 这些大数组
+ * （一个大团队光 submissions 就能上千条）。列表页一次性全拉进来，
+ * 进团队详情又要拉一次完整聚合根，等于同一份数据在内存里存两份。
+ *
+ * 这里只挑列表真正渲染的字段，其余置空。注意：返回对象**不是**完整 TeamState，
+ * 只用于列表展示，任何编辑/确认/发布操作都必须先 getTeam() 取完整聚合根。
+ */
+export interface TeamListItem {
+  teamId: string
+  name: string
+  myMemberId: string | null
+  draftRevision: number
+  revision: number
+  roster: TeamState['roster']
+  items: Array<{ itemId: string }>
+  allocations: Array<{ allocationId: string }>
+  checkpoints: Array<{ checkpointId: string }>
+  latestPublication: TeamState['latestPublication']
+  createdAt: number
+  updatedAt: number
+}
+
+export async function listTeamSummaries(): Promise<TeamListItem[]> {
+  const all = await db.teamState.toArray()
+  return all.map((t) => {
+    const parsed = teamStateSchema.parse(t)
+    return {
+      teamId: parsed.teamId,
+      name: parsed.name,
+      myMemberId: parsed.myMemberId,
+      draftRevision: parsed.draftRevision,
+      revision: parsed.revision,
+      roster: parsed.roster,
+      // 列表只数个数，不需要完整对象
+      items: parsed.items.map((i) => ({ itemId: i.itemId })),
+      allocations: parsed.allocations.map((a) => ({ allocationId: a.allocationId })),
+      checkpoints: parsed.checkpoints.map((c) => ({ checkpointId: c.checkpointId })),
+      latestPublication: parsed.latestPublication,
+      createdAt: parsed.createdAt,
+      updatedAt: parsed.updatedAt,
+    }
+  })
+}
+
 export async function getPublication(publicationId: string): Promise<{ meta: PublicationMeta; snapshot: PublicSnapshot } | undefined> {
   const row = await db.teamPublications.get(publicationId)
   return row ? { meta: row.meta, snapshot: row.snapshot } : undefined

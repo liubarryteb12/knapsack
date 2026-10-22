@@ -140,14 +140,33 @@ function daysOf(trip: Trip): number {
   return daysBetween(trip.startDate, trip.endDate)
 }
 
-function budgetPct(trip: Trip): number {
-  if (trip.totalBudgetFen <= 0) return 0
-  const used = trip.expenses.reduce((a, e) => a + e.amountFen, 0)
-  return Math.min(100, Math.round((used / trip.totalBudgetFen) * 100))
-}
+/**
+ * 已用金额与预算占比按 trip 引用缓存。
+ *
+ * 模板里这两项每个卡片要读 3–4 次，而每次都是对整个 expenses 数组的 reduce。
+ * 长列表（压测到 200 个旅行）下，一次重渲染就是几百次重复遍历。
+ * 这里用 WeakMap 按对象引用缓存：同一份 trip 数据没被替换过就不重算，
+ * 编辑/覆盖会换出新对象，缓存自然失效，不需要手动清理。
+ */
+const usedFenCache = new WeakMap<Trip, { used: number; pct: number }>()
 
 function usedFen(trip: Trip): number {
-  return trip.expenses.reduce((a, e) => a + e.amountFen, 0)
+  return statsOf(trip).used
+}
+
+function budgetPct(trip: Trip): number {
+  return statsOf(trip).pct
+}
+
+function statsOf(trip: Trip): { used: number; pct: number } {
+  const hit = usedFenCache.get(trip)
+  if (hit) return hit
+  const used = trip.expenses.reduce((a, e) => a + e.amountFen, 0)
+  const pct =
+    trip.totalBudgetFen <= 0 ? 0 : Math.min(100, Math.round((used / trip.totalBudgetFen) * 100))
+  const stats = { used, pct }
+  usedFenCache.set(trip, stats)
+  return stats
 }
 
 /** 人性化日期：同年省略年份，如「10月2日 – 4日」 */

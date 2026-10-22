@@ -68,13 +68,26 @@ const joinPayload = computed(() =>
     : '',
 )
 
+/**
+ * 重画二维码。
+ *
+ * watch(hostIp) 在切换网卡时会连续触发，而 toDataURL 是异步的：
+ * 不取消的话会有多个生成任务并发跑完，旧的 dataURL 白白占着内存，
+ * 还可能后到的旧结果覆盖新结果（二维码地址与监听地址不一致）。
+ * 用一个自增序号只认最后一次的结果。
+ */
+let qrSeq = 0
+
 async function refreshQr() {
   if (!hosting.value) return
-  qrUrl.value = await QRCode.toDataURL(joinPayload.value, {
+  const seq = ++qrSeq
+  const url = await QRCode.toDataURL(joinPayload.value, {
     width: 300,
     margin: 1,
     errorCorrectionLevel: 'M',
   })
+  if (seq !== qrSeq) return // 已有更新的请求，丢弃这次结果
+  qrUrl.value = url
 }
 
 async function startHosting() {

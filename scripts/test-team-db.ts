@@ -690,6 +690,49 @@ async function testExpenseMemberValidation() {
   check('入账且付款人=作者', after2!.expenses.length === 1 && after2!.expenses[0]!.payerMemberId === org)
   check('shares 总和等于金额', Object.values(after2!.expenses[0]!.shares).reduce((a, b) => a + b, 0) === 3600)
 }
+// ---------- 列表投影：只带展示字段，不带大数组 ----------
+
+async function testTeamListProjection() {
+  console.log('团队列表投影（内存优化）')
+  const { createTeam, saveTeam, listTeamSummaries } = await import('../src/db/teamActions')
+
+  const base = await createTeam({ name: '投影团', organizerName: '甲' })
+  const team = await saveTeam({
+    ...base,
+    roster: [
+      { memberId: 'org1', name: '甲', role: 'organizer', joinedAt: 1 },
+      { memberId: 'm2', name: '乙', role: 'member', joinedAt: 2 },
+    ],
+    items: [{ itemId: 'i1', name: '水', category: 'food', qtyNeeded: 24, unit: '瓶', note: '' }],
+    allocations: [{ allocationId: 'a1', itemId: 'i1', qtyPlanned: 24, purchaseBy: 'm2', carryBy: null, note: '' }],
+    checkpoints: [{ checkpointId: 'cp1', name: '集合点', counterBy: 'org1', status: 'open', note: '' }],
+    submissions: [
+      {
+        submissionId: 's1', revision: 1, teamId: base.teamId, authorMemberId: 'm2',
+        allocationId: 'a1', stage: 'purchase', checkpointId: null, taskRevision: 1,
+        qty: 24, amountFen: null, expenseReportId: null, payerMemberId: null,
+        relatedAllocationIds: [], note: '', uploadedAt: 1, review: 'submitted',
+        reviewNote: '', reviewedAt: null,
+      },
+    ] as any,
+  })
+
+  const list = await listTeamSummaries()
+  const row = list.find((t) => t.teamId === team.teamId)!
+  check('投影含 teamId 与名称', row.teamId === team.teamId && row.name === '投影团')
+  check('投影保留 roster（列表要数人数）', row.roster.length === 2)
+  check('投影保留 items/allocations/checkpoints 计数', row.items.length === 1 && row.allocations.length === 1 && row.checkpoints.length === 1)
+  check('投影不含 submissions（大数组）', !('submissions' in row))
+  check('投影不含 expenses（大数组）', !('expenses' in row))
+  check('投影不含 pendingJoins', !('pendingJoins' in row))
+  check('投影不含 credentialSecret（安全）', !('credentialSecret' in row))
+  check('投影保留 latestPublication 字段', 'latestPublication' in row)
+
+  // 序列化体积对比：投影应该显著小于完整聚合根
+  const fullJson = JSON.stringify(team).length
+  const rowJson = JSON.stringify(row).length
+  check('投影序列化后不大于完整版', rowJson <= fullJson)
+}
 async function main() {
   await testA01()
   await testA12_A13()
@@ -699,6 +742,7 @@ async function main() {
   await testStaleOnDraftBump()
   await testExpenseReportIdOwnership()
   await testExpenseMemberValidation()
+  await testTeamListProjection()
   await testA34ProxyToPlain()
   if (failed > 0) {
     console.error(`\n${failed} 项失败`)

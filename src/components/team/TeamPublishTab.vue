@@ -52,13 +52,19 @@ async function start() {
   }
 }
 
+/** 重画二维码。自增序号丢弃过期结果，避免并发生成时旧 dataURL 覆盖新地址。 */
+let qrSeq = 0
+
 async function refreshQr() {
   if (!session.value) return
-  qrUrl.value = await QRCode.toDataURL(session.value.ticket, {
+  const seq = ++qrSeq
+  const url = await QRCode.toDataURL(session.value.ticket, {
     width: 300,
     margin: 1,
     errorCorrectionLevel: 'M',
   })
+  if (seq !== qrSeq) return
+  qrUrl.value = url
 }
 
 async function stop() {
@@ -68,10 +74,16 @@ async function stop() {
 }
 
 async function switchIp(ip: string) {
+  const previous = selectedIp.value
   selectedIp.value = ip
   // 换网卡需重开会话：二维码里的地址必须与监听地址一致
   await stop()
   await start()
+  // 新地址起不来时回退到原地址再试一次，别把用户留在「没有会话也没有二维码」的状态
+  if (!session.value && previous && previous !== ip) {
+    selectedIp.value = previous
+    await start()
+  }
 }
 
 async function copyTicket() {

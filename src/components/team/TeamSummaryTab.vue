@@ -205,16 +205,48 @@ async function confirmImport() {
 
 const confirmed = computed(() => currentConfirmedQty(props.team.submissions))
 
+/**
+ * 缺口总表的每一行。
+ *
+ * 原来 counts / gap / uncounted 都是在模板里用函数现算的，每个单元格要重复
+ * 遍历 submissions 与 checkpoints 好几轮（gapOf 内部又会调 confirmedCount），
+ * 一次重渲染下来是几倍的无谓遍历。这里全部在 computed 里算好，
+ * 模板只做纯读取——computed 依赖不变就不会重算。
+ */
 const rows = computed(() =>
   props.team.allocations.map((a) => {
     const item = props.team.items.find((i) => i.itemId === a.itemId)
     const summary = item
-      ? summarizeAllocation(a, item, props.team.checkpoints, confirmed.value)
+      ? summarizeAllocation(a, item, props.team.checkpoints, confirmed.value, props.team.submissions)
       : null
+
+    const counts: Array<{ checkpointId: string; qty: number }> = []
+    for (const cp of props.team.checkpoints) {
+      const hit = confirmed.value.get(
+        confirmKeyString({ allocationId: a.allocationId, stage: 'count', checkpointId: cp.checkpointId }),
+      )
+      if (hit) counts.push({ checkpointId: cp.checkpointId, qty: hit.qty })
+    }
+
+    const hasPending = props.team.submissions.some(
+      (s) =>
+        s.allocationId === a.allocationId &&
+        s.stage === 'count' &&
+        s.review !== 'confirmed' &&
+        s.review !== 'rejected',
+    )
+    const last = counts.length > 0 ? counts[counts.length - 1]! : null
+    const gap =
+      item && last && !hasPending ? Math.max(0, item.qtyNeeded - last.qty) : null
+    const uncounted = hasPending || counts.length === 0
+
     return {
       allocation: a,
       item,
       summary,
+      counts,
+      gap,
+      uncounted,
       purchase: confirmed.value.get(
         confirmKeyString({ allocationId: a.allocationId, stage: 'purchase', checkpointId: null }),
       ),
@@ -224,27 +256,6 @@ const rows = computed(() =>
     }
   }),
 )
-
-function confirmedCount(allocationId: string): Array<{ checkpointId: string; qty: number }> {
-  const out: Array<{ checkpointId: string; qty: number }> = []
-  for (const cp of props.team.checkpoints) {
-    const hit = confirmed.value.get(
-      confirmKeyString({ allocationId, stage: 'count', checkpointId: cp.checkpointId }),
-    )
-    if (hit) out.push({ checkpointId: cp.checkpointId, qty: hit.qty })
-  }
-  return out
-}
-
-function gapOf(allocationId: string, qtyNeeded: number): { gap: number | null; uncounted: boolean } {
-  const counts = confirmedCount(allocationId)
-  const hasPending = props.team.submissions.some(
-    (s) => s.allocationId === allocationId && s.stage === 'count' && s.review !== 'confirmed' && s.review !== 'rejected',
-  )
-  if (counts.length === 0 || hasPending) return { gap: null, uncounted: true }
-  const last = counts[counts.length - 1]!
-  return { gap: Math.max(0, qtyNeeded - last.qty), uncounted: false }
-}
 </script>
 
 <template>
@@ -308,9 +319,9 @@ function gapOf(allocationId: string, qtyNeeded: number): { gap: number | null; u
             <td>{{ r.purchase ? r.purchase.qty : '—' }}</td>
             <td>{{ r.carry ? r.carry.qty : '—' }}</td>
             <td>
-              <template v-if="confirmedCount(r.allocation.allocationId).length">
+              <template v-if="r.counts.length">
                 <span
-                  v-for="c in confirmedCount(r.allocation.allocationId)"
+                  v-for="c in r.counts"
                   :key="c.checkpointId"
                   class="count-chip"
                 >
@@ -321,16 +332,16 @@ function gapOf(allocationId: string, qtyNeeded: number): { gap: number | null; u
             </td>
             <td>
               <template v-if="r.item">
-                <template v-if="gapOf(r.allocation.allocationId, r.item.qtyNeeded).uncounted">
+                <template v-if="r.uncounted">
                   <n-tag size="tiny" type="warning" :bordered="false">待核对</n-tag>
                 </template>
                 <template v-else>
                   <n-tag
                     size="tiny"
-                    :type="(gapOf(r.allocation.allocationId, r.item.qtyNeeded).gap ?? 0) > 0 ? 'error' : 'success'"
+                    :type="(r.gap ?? 0) > 0 ? 'error' : 'success'"
                     :bordered="false"
                   >
-                    缺 {{ gapOf(r.allocation.allocationId, r.item.qtyNeeded).gap }}
+                    缺 {{ r.gap }}
                   </n-tag>
                 </template>
               </template>

@@ -14,7 +14,7 @@ import { canScan } from '../utils/lanSessionScan'
 import QrScanner from '../components/QrScanner.vue'
 import UiPageHeader from '../components/ui/UiPageHeader.vue'
 import UiEmptyState from '../components/ui/UiEmptyState.vue'
-import type { TeamState } from '../team/schema'
+import type { TeamListItem } from '../db/teamActions'
 
 const router = useRouter()
 const teams = useTeamsStore()
@@ -92,7 +92,7 @@ async function doJoin() {
   }
   joining.value = true
   try {
-    const existing = teams.teams.find((t) => {
+    const existing = teams.teamList.find((t) => {
       try {
         return parseHostTicket(code).teamId === t.teamId
       } catch {
@@ -131,12 +131,12 @@ function onScanError(msg: string) {
 
 // ---------- 展示 ----------
 
-function myRole(t: TeamState): string {
+function myRole(t: TeamListItem): string {
   const me = t.roster.find((m) => m.memberId === t.myMemberId)
   return me?.role === 'organizer' ? '组织者' : '成员'
 }
 
-function goTeam(t: TeamState) {
+function goTeam(t: TeamListItem) {
   void router.push(`/team/${t.teamId}`)
 }
 </script>
@@ -155,13 +155,13 @@ function goTeam(t: TeamState) {
     </UiPageHeader>
 
     <UiEmptyState
-      v-if="teams.loaded && teams.teams.length === 0"
+      v-if="teams.loaded && teams.teamList.length === 0"
       title="还没有团队"
       description="自己组织旅行时创建一个团队；收到组织者的会话码就扫码加入。"
     />
 
     <div v-else class="grid">
-      <button v-for="t in teams.teams" :key="t.teamId" class="card" @click="goTeam(t)">
+      <button v-for="t in teams.teamList" :key="t.teamId" class="card" @click="goTeam(t)">
         <div class="card-head">
           <span class="card-title">{{ t.name }}</span>
           <n-tag :type="myRole(t) === '组织者' ? 'warning' : 'info'" size="small" :bordered="false">

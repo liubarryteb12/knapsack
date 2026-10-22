@@ -86,7 +86,7 @@
 | R13 | 多版本费用/节点确认和发布并发 | 高 | 事务、草稿revision、不变历史 | 已关闭（E04） |
 | R14 | Android文件下载不落到可见文件 | 高 | 实际分享/保存和选择往返 | 部分关闭：保存/分享真机通过（E18）；系统选择往返待手测 |
 | R15 | android 工程存在重复的原生插件实现：根包 TeamHostPlugin.java（已注册、已验证）与未引用的 teamhost/ 包（基于 NanoHTTPD，另有 nanohttpd 依赖） | 中 | 确认无人引用后清理，避免下次接手误改 | 已关闭（用户授权删除；teamhost/ 目录与 nanohttpd 依赖已删，重建装机通过，E20） |
-| R16 | 「闪退」根因：内存压力下（PSS ≈200MB，打开系统分享面板时）WebView **渲染进程**被系统杀掉（`E/chromium aw_browser_terminator.cc(156) Renderer process crash detected (code -1)`），应用进程存活但 WebView 报废 → 白屏，用户感知为闪退；Capacitor 默认 `BridgeWebViewClient.onRenderProcessGone` 无 listener 时 return false，不做兜底 | 高 | 渲染进程死亡必须自愈（重建 Activity + 恢复路由）；同时降低峰值内存 | 部分关闭：自愈已实现并实测（E23）；峰值内存未降，待全量 sweep 复测 |
+| R16 | 「闪退」根因：内存压力下（PSS ≈200MB，打开系统分享面板时）WebView **渲染进程**被系统杀掉（`E/chromium aw_browser_terminator.cc(156) Renderer process crash detected (code -1)`），应用进程存活但 WebView 报废 → 白屏，用户感知为闪退；Capacitor 默认 `BridgeWebViewClient.onRenderProcessGone` 无 listener 时 return false，不做兜底 | 高 | 渲染进程死亡必须自愈（重建 Activity + 恢复路由）；同时降低峰值内存 | 部分关闭：自愈已实现并实测（E23）；2026-10-22 已做一轮 JS 侧降载（E28：缺口表 22x、列表投影 -93%），真机 PSS 复测仍待用户手动跑 |
 | R17 | 真机 WebView 版本 116.0.5845.92（2023 年内核），远低于 Capacitor 8 文档建议的 140 分界；老内核内存管理与兼容性风险不可控 | 中 | 登记环境差异；升级系统 WebView 后复测；代码侧不依赖新内核特性 | 未处理（环境限制，非本仓库可修） |
 
 风险关闭需填写修复位置和证据ID；不能仅因写了规格就关闭。
@@ -165,7 +165,7 @@
 | E25 | 2026-10-22 | 优化轮：逻辑键唯一性 + A08 stale + 金额纪律 + 死代码清理 | 根目录 `npx tsx scripts/test-team-db.ts`（退出码 0，79 行输出，含新增 15 条断言）；`npx vue-tsc --noEmit`（退出码 0）；`npm run build`（退出码 0，dist 产物正常）；7 个测试脚本全量回归（test-settle / test-tripfile / test-lansession / test-team / test-team-file / test-team-identity / test-team-db）全部退出码 0 | 修复前复现：同一逻辑键 2 条 confirmed、当前确认量随 reviewedAt 漂移；修复后唯一且确定 | scripts/test-team-db.ts（新增 testConfirmKeyUniqueness / testStaleOnDraftBump）、src/db/teamActions.ts、src/team/domain.ts、src/components/team/*.vue |
 | E26 | 2026-10-22 | 优化轮：金额输入边界验证 | 根目录临时探针 `npx tsx scripts/_probe*.ts`（已删除） | 旧 `Math.round(Number(x)*100)`：`abc`→NaN、`1.005`→100（脏值入库）；改用 yuanToFen 后全部返回 null 并给人话报错 | src/utils/money.ts（既有）、src/components/team/TeamMemberTab.vue |
 | E27 | 2026-10-22 | 优化轮：费用来源独占 + 成员校验 + 冗余校验清理 + 上报表单 | 根目录 `npx tsx scripts/test-team-db.ts`（退出码 0，新增 testExpenseReportIdOwnership / testExpenseMemberValidation 共 11 条断言）；`npx vue-tsc --noEmit`（退出码 0）；`npm run build`（退出码 0）；7 个测试脚本全量回归全部退出码 0 | 修复前复现：m3 复用 m2 的 expenseReportId 后确认入账，m2 的 3600 分被 9900 分静默覆盖，账本少一笔钱；payerMemberId='GHOST-USER' 可入账。修复后均被拒绝 | scripts/test-team-db.ts、src/db/teamActions.ts、src/components/team/TeamMemberTab.vue |实施者从E03追加。失败也登记。E01、E02仅为文档记录，不能作为任何工序退出或验收通过的证据。不要粘贴含凭证/密钥的日志；无需创建大批冗余截图或报告，保留复现必要证据即可。
-
+| E28 | 2026-10-22 | 优化轮：内存与重复计算（R16 收尾） | 根目录基准脚本（300 批次/300 报告缺口总表 10 次重渲染：模板现算 37.1ms vs computed 预计算 1.70ms，22x；单团队聚合根 133.6KB vs 列表投影 9.3KB，-93.1%）；`npx tsx scripts/test-team-db.ts` 退出码 0（新增 testTeamListProjection 9 条断言）；`npx vue-tsc --noEmit` 退出码 0；`npm run build` 退出码 0；7 个测试脚本全量回归全部退出码 0 | 修复前：TripsView 模板每卡 3–4 次 reduce；TeamSummaryTab 每单元格 5 轮 submissions 遍历；团队列表页把每个团队的完整聚合根搬进内存 | src/views/TripsView.vue、src/components/team/TeamSummaryTab.vue、src/db/teamActions.ts、src/stores/teams.ts、src/views/TeamsView.vue、src/components/LanSessionModal.vue、src/components/team/TeamPublishTab.vue |
 ## 7. 实际变更登记
 
 | 日期 | 工序 | 文件 | 变更目的 | 关联验收 | 状态 |
@@ -197,7 +197,10 @@
 | 2026-10-22 | 优化：费用入账成员校验 | src/db/teamActions.ts | decideSubmission 确认费用时校验 payerMemberId 在名册、名册非空（SPEC 3.5「正式数据校验成员存在」）。修复前幽灵付款人可入账 | A10、A24 | 已实现，E27 |
 | 2026-10-22 | 优化：删冗余嵌套校验 | src/db/teamActions.ts | publishSnapshot 里 draftRevision 被同一个条件检查了两遍（外层 if 内层与紧接着的独立 if 完全相同） | A12 | 已实现，E27 |
 | 2026-10-22 | 优化：上报任务版本与表单重置 | src/components/team/TeamMemberTab.vue | taskRevision 未领过快照时不再写死 1（会一改分工就变 stale），改用本机 draftRevision；上报成功后重置表单，避免下次打开残留导致误重复上报 | A08 | 已实现，E27 || 2026-10-21 | 闪退修复 P-b | src/team/teamHostService.ts、src/main.ts | 先 addListener 再 start（否则事件被 Capacitor 丢弃）；全局 errorHandler/unhandledrejection 记环形日志 | R16 | 已实现，E21 |
-| 2026-10-21 | 渲染进程自愈 | android/…/RendererRecovery.java（新增）、android/…/MainActivity.java | 渲染进程死亡后重建 Activity 并恢复 hash 路由，替代白屏 | R16 | 已实现，E23 |
+| 2026-10-22 | 优化：TripsView 预算统计缓存 | src/views/TripsView.vue | 模板里 usedFen/budgetPct 每卡被读 3–4 次，每次对整个 expenses reduce；改 WeakMap 按 trip 引用缓存，编辑换出新对象自然失效 | R16 | 已实现，E28 |
+| 2026-10-22 | 优化：缺口总表预计算 | src/components/team/TeamSummaryTab.vue | counts/gap/uncounted 原在模板里现算，每单元格 5 轮 submissions 遍历（gapOf 内部又调 confirmedCount）；全部移入 rows computed，模板改纯读取。300 批次 10 次重渲染 37.1ms → 1.70ms | R16 | 已实现，E28 |
+| 2026-10-22 | 优化：团队列表轻量投影 | src/db/teamActions.ts、src/stores/teams.ts、src/views/TeamsView.vue | 新增 listTeamSummaries，列表页只取展示字段（teamId/name/roster/各计数/发布状态），裁掉 submissions/expenses/pendingJoins/credentialSecret；store 拆出 teamList，详情页仍走 refresh(teamId) 取完整聚合根。单团队 133.6KB → 9.3KB | R16 | 已实现，E28 |
+| 2026-10-22 | 优化：二维码生成可取消 | src/components/LanSessionModal.vue、src/components/team/TeamPublishTab.vue | watch(hostIp) 连续触发时多个 toDataURL 并发跑完，旧 dataURL 白占内存且可能后到覆盖新地址（二维码地址与监听地址不一致）；改自增序号只认最后一次。另给 switchIp 加失败回退，避免用户卡在无会话无二维码状态 | R16 | 已实现，E28 || 2026-10-21 | 渲染进程自愈 | android/…/RendererRecovery.java（新增）、android/…/MainActivity.java | 渲染进程死亡后重建 Activity 并恢复 hash 路由，替代白屏 | R16 | 已实现，E23 |
 | 2026-10-21 | A34 修复 | src/db/teamActions.ts | 新增 toPlain()，写入 Dexie 前消除 Vue 响应式 Proxy（DataCloneError） | A34 | 已实现，E24 |
 | 2026-10-21 | P7 测试脚本 | scripts/p7-device-single.ts、p7-a22-restore.ts、p7-a28-restart.ts、p7-a30-offline.ts、p7-a34-file.ts、p7-a34-picker.ts、p7-a35-ui.ts、p7-e19-launch-race.ts、p7-crash-sweep.ts、scripts/lib/p7-*.ts | P7 单机验收自动化（CDP 驱动 WebView + adb 驱动选择器）与崩溃压测 | A22、A28、A30、A34、A35、E19、R16 | 已实现，E22–E25 |
 
