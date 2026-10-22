@@ -16,12 +16,34 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        // 签名配置从 android/keystore.properties 读取（不入库）。
+        // 文件不存在时不配 release 签名，构建出未签名包（可装但不可发布）。
+        release {
+            if (project.hasProperty('KNAPSACK_KEYSTORE')) {
+                storeFile file(KNAPSACK_KEYSTORE)
+                storePassword KNAPSACK_STORE_PASSWORD
+                keyAlias KNAPSACK_KEY_ALIAS
+                keyPassword KNAPSACK_KEY_PASSWORD
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (project.hasProperty('KNAPSACK_KEYSTORE')) {
+                signingConfig signingConfigs.release
+            }
         }
     }
+}
+
+// keystore.properties 存在则加载其属性（keystore 本身与密码都不入库）
+if (file('keystore.properties').exists()) {
+    def kp = new Properties()
+    file('keystore.properties').withInputStream { kp.load(it) }
+    kp.each { k, v -> project.ext.set(k, v) }
 }
 
 repositories {

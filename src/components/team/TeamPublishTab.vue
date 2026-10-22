@@ -114,6 +114,10 @@ async function publish() {
   const organizerId = props.team.myMemberId
   if (!organizerId) return
   publishing.value = true
+  // 细节 A：发布说明（Release Note），非必填，最多 200 字，随快照落库
+  const note = window.prompt('发布说明（可选，最多 200 字，会写入快照并展示给成员）', '')
+  if (note === null) return // 用户取消
+  const releaseNote = note.trim().slice(0, 200)
   try {
     const res = await publishSnapshot({
       teamId: props.team.teamId,
@@ -123,6 +127,7 @@ async function publish() {
       // 把用户看到的预览摘要带给主机：预览之后若有人确认/退回报告或审批加入，
       // 实际快照会与预览不一致，发布被拒绝并要求重看（SPEC 4.2）。
       expectedPreviewDigest: preview.value.digest,
+      releaseNote,
     })
     if (!res.ok) {
       message.error(res.error)
@@ -143,7 +148,6 @@ const moreOptions = [
 function onMoreSelect(key: string) {
   if (key === 'export-public') void exportPublic()
 }
-
 // ---------- 导出公共资料文件（离线兜底） ----------
 
 const exporting = ref(false)
@@ -245,16 +249,7 @@ onBeforeUnmount(() => {
           <p class="muted small">
             会话码只含本次会话的临时公钥，成员各自与主机协商独立密钥，成员之间互不可解密。
           </p>
-          <div class="head-actions">
-            <n-button size="small" @click="copyTicket">复制会话码</n-button>
-            <!-- 细节 C：文件导出收进「更多」 -->
-            <n-dropdown trigger="click" :options="moreOptions" @select="onMoreSelect">
-              <n-button size="small" tertiary>
-                <template #icon><MoreHorizontal :size="14" /></template>
-                更多
-              </n-button>
-            </n-dropdown>
-          </div>
+          <n-button size="small" @click="copyTicket">复制会话码</n-button>
         </div>
       </div>
     </n-card>
@@ -268,6 +263,13 @@ onBeforeUnmount(() => {
             发布第 {{ latestVersion + 1 }} 版
           </n-button>
         </div>
+          <!-- 细节 C：低频文件导出收进「更多」（发布卡片始终可见，不受会话开关影响） -->
+          <n-dropdown trigger="click" :options="moreOptions" @select="onMoreSelect">
+            <n-button size="small" tertiary>
+              <template #icon><MoreHorizontal :size="14" /></template>
+              更多
+            </n-button>
+          </n-dropdown>
       </template>
 
       <n-alert v-if="team.roster.length === 0" type="warning" :show-icon="false" class="tip">
