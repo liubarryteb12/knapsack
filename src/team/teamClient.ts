@@ -27,7 +27,7 @@ import {
 import { makeEnvelope, type TeamEnvelope, type TeamActionName, type TeamResponse } from './teamProtocol'
 import { getTeamLink, putTeamLink } from '../db/teamActions'
 import type { TeamLink } from '../db/teamSchema'
-import type { PublicSnapshot, TeamState } from './schema'
+import type { PublicSnapshot } from './schema'
 
 export interface MemberSession {
   ticket: HostSessionTicket
@@ -274,15 +274,6 @@ function opId(prefix: string): string {
 // 主机侧 dispatchAction 对 organizer.* 动作校验 role=organizer 后
 // 代为执行本地事务。所有授权都走既有凭证链路，无新增密码学面。
 
-/** 拉取完整团队状态（待审列表、缺口、名册、发布历史） */
-export async function organizerFetchState(
-  session: MemberSession,
-): Promise<{ ok: boolean; team?: TeamState; error?: string }> {
-  const res = await sendAction(session, 'organizer.state', { auth: authOf(session) }, opId('ostate'))
-  if (!res.ok) return { ok: false, error: res.error }
-  return { ok: true, team: (res.result as { team: TeamState }).team }
-}
-
 /** 确认/退回一条报告 */
 export async function organizerDecide(
   session: MemberSession,
@@ -321,36 +312,32 @@ export async function organizerApprove(
   return res.ok ? { ok: true } : { ok: false, error: res.error }
 }
 
-/** 发布不可变快照（expectedPreviewDigest 保证发布内容与预览一致） */
+/**
+ * 发布不可变快照。
+ * expectedPreviewDigest 保证发布内容与预览一致（可选）；
+ * releaseNote 是组织者寄语（细节 A），随快照落库、成员端领取后展示。
+ */
 export async function organizerPublish(
   session: MemberSession,
   expectedDraftRevision: number,
   expectedPreviewDigest?: string,
+  releaseNote?: string,
 ): Promise<{ ok: boolean; version?: number; error?: string }> {
+  const trimmed = releaseNote && releaseNote.trim() ? releaseNote.trim().slice(0, 200) : undefined
   const res = await sendAction(
     session,
     'organizer.publish',
-    { auth: authOf(session), expectedDraftRevision, expectedPreviewDigest },
+    {
+      auth: authOf(session),
+      expectedDraftRevision,
+      expectedPreviewDigest,
+      releaseNote: trimmed,
+    },
     `remote-publish-${Date.now().toString(36)}`,
   )
   if (!res.ok) return { ok: false, error: res.error }
   return { ok: true, version: (res.result as { version: number }).version }
 }
-
-/** 整包保存团队草稿（saveTeam 的读-改-写守卫在主机侧执行） */
-export async function organizerTeamEdit(
-  session: MemberSession,
-  team: TeamState,
-): Promise<{ ok: boolean; error?: string }> {
-  const res = await sendAction(
-    session,
-    'organizer.teamEdit',
-    { auth: authOf(session), team, draftRevision: team.draftRevision },
-    `remote-edit-${team.draftRevision}-${Date.now().toString(36)}`,
-  )
-  return res.ok ? { ok: true } : { ok: false, error: res.error }
-}
-
 /** 撤回自己一条待审报告（SPEC 3.4 显式撤回请求） */
 export async function withdrawMyReport(
   session: MemberSession,

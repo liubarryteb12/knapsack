@@ -30,12 +30,10 @@ export type TeamActionName =
   | 'publication.fetch'
   | 'receipt.submit'
   | 'task.ack'
-  // ---- 组织者专用（远程汇总操作：手机主机放家里，人在电脑/其他设备上操作）----
-  | 'organizer.state'      // 拉取完整团队状态（待审列表、缺口、名册、发布历史）
+  // ---- 组织者当面操作（扫码接入后当场确认/审批/发布；AIMS 细节 D 已取消远程改分工）----
   | 'organizer.decision'   // 确认/退回报告
   | 'organizer.approve'    // 审批/拒绝加入申请（含恢复配对）
   | 'organizer.publish'    // 发布不可变快照
-  | 'organizer.teamEdit'   // 分工编辑（名册/物资/批次/节点，推进 draftRevision）
 
 /** 身份声明：由凭证证明，主机从凭证推导作者，不采信自报身份 */
 export interface ActorClaimPayload {

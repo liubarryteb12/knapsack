@@ -7,9 +7,9 @@
  * 会话关闭/离开页面即停止接入；第一版不做后台常驻（SPEC 7.3）。
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { NAlert, NButton, NCard, NSelect, NTag, useMessage } from 'naive-ui'
+import { NAlert, NButton, NCard, NDropdown, NSelect, NTag, useMessage } from 'naive-ui'
 import QRCode from 'qrcode'
-import { Play, Square, Send, FileDown } from '@lucide/vue'
+import { Play, Square, Send, MoreHorizontal } from '@lucide/vue'
 import { startTeamHost, stopTeamHost, currentTeamSession } from '../../team/teamHostService'
 import { publishSnapshot, getTeam, latestPublicationOf } from '../../db/teamActions'
 import { fenToYuan } from '../../utils/money'
@@ -136,6 +136,14 @@ async function publish() {
   }
 }
 
+// ---------- 「更多」折叠菜单（细节 C） ----------
+const moreOptions = [
+  { label: '导出资料文件', key: 'export-public' },
+]
+function onMoreSelect(key: string) {
+  if (key === 'export-public') void exportPublic()
+}
+
 // ---------- 导出公共资料文件（离线兜底） ----------
 
 const exporting = ref(false)
@@ -237,7 +245,16 @@ onBeforeUnmount(() => {
           <p class="muted small">
             会话码只含本次会话的临时公钥，成员各自与主机协商独立密钥，成员之间互不可解密。
           </p>
-          <n-button size="small" @click="copyTicket">复制会话码</n-button>
+          <div class="head-actions">
+            <n-button size="small" @click="copyTicket">复制会话码</n-button>
+            <!-- 细节 C：文件导出收进「更多」 -->
+            <n-dropdown trigger="click" :options="moreOptions" @select="onMoreSelect">
+              <n-button size="small" tertiary>
+                <template #icon><MoreHorizontal :size="14" /></template>
+                更多
+              </n-button>
+            </n-dropdown>
+          </div>
         </div>
       </div>
     </n-card>
@@ -246,10 +263,6 @@ onBeforeUnmount(() => {
     <n-card title="发布公共版本" size="small">
       <template #header-extra>
         <div class="head-actions">
-          <n-button size="small" :disabled="latestVersion === 0" :loading="exporting" @click="exportPublic">
-            <template #icon><FileDown :size="14" /></template>
-            导出资料文件
-          </n-button>
           <n-button type="primary" size="small" :loading="publishing" @click="publish">
             <template #icon><Send :size="14" /></template>
             发布第 {{ latestVersion + 1 }} 版

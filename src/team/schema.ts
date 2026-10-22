@@ -172,6 +172,8 @@ export const publicSnapshotSchema = z.object({
   sourceDraftRevision: z.number().int().min(1),
   createdAt: z.number().int().min(0),
 /** 内容摘要（canonicalJson 的 FNV-1a 32 位 + 长度后缀），用于幂等与同 ID 异内容快速比对；完整性由传输层 AES-GCM 保证 */
+  /** 组织者发布寄语（细节 A）：非必填，最多 200 字；成员端领取后展示，空则隐藏 */
+  releaseNote: z.string().max(200).default(''),
   digest: z.string().min(1),
   /** 公共名册 */
   roster: z.array(

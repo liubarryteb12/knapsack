@@ -7,6 +7,7 @@ import { computed, onMounted, ref } from 'vue'
 import {
   NButton,
   NCard,
+  NDropdown,
   NInput,
   NInputNumber,
   NSelect,
@@ -17,7 +18,7 @@ import {
   NAlert,
   useMessage,
 } from 'naive-ui'
-import { Plug, RefreshCw, Upload, Download, ScanLine, FileDown, FileUp } from '@lucide/vue'
+import { Plug, RefreshCw, Upload, Download, ScanLine, MoreHorizontal } from '@lucide/vue'
 import { useTeamsStore } from '../../stores/teams'
 import {
   connectAsMember,
@@ -25,7 +26,6 @@ import {
   submitReport,
   sendReceipt,
   type MemberSession,
-  organizerFetchState,
   organizerApprove,
   organizerPublish,
   organizerDecide,
@@ -73,8 +73,6 @@ async function connect(code?: string) {
     session.value = await connectAsMember(text)
     ticket.value = text
     message.success('已连上组织者主机')
-    // 组织者角色连上后自动拉一次远程状态，立即可操作
-    if (me.value?.role === 'organizer') void remoteRefresh()
   } catch (e) {
     message.error(e instanceof Error ? e.message : String(e))
   } finally {
@@ -92,77 +90,54 @@ function onScanError(msg: string) {
   message.error(`扫码失败：${msg}（可改用手动粘贴会话码）`)
 }
 
-// ---------- 组织者远程操作 ----------
-// 设计：手机主机放家里只当算力端（存储 + 会话），组织者拿着会话码
-// 从任意设备接入，确认/审批/发布都通过 organizer.* 动作在主机上执行。
-
+// ---------- 组织者当面操作（扫码接入后当场确认/审批/发布） ----------
+// AIMS 细节 D 已取消「远程改分工」：分工只在主机本机改。
+// 这里保留的确认/审批/发布，是组织者用另一台设备（平板/大屏）扫码接入后
+// 当场操作的便利入口，数据始终来自主机本机，无远程控制语义。
 const connectedAsOrganizer = computed(() => {
   return me.value?.role === 'organizer' && !!session.value
 })
 
-const remoteState = ref<TeamState | null>(null)
-const remoteLoading = ref(false)
 const remoteConfirming = ref<string | null>(null)
+const remoteApprovingId = ref<string | null>(null)
+const remotePublishing = ref(false)
 
-const remotePendingSubs = computed(() =>
-  (remoteState.value?.submissions ?? []).filter((s) => s.review === 'submitted'),
+/** 待审核列表：主机本机数据（props.team）， revision>1 即「有更新」 */
+const orgPendingSubs = computed(() =>
+  (props.team.submissions ?? []).filter((s) => s.review === 'submitted'),
 )
-const remotePendingCount = computed(() => remotePendingSubs.value.length)
-const remotePendingJoins = computed(
-  () => (remoteState.value?.pendingJoins ?? []).filter((j) => j.status === 'pending').length,
-)
-const remoteVersion = computed(() => remoteState.value?.latestPublication?.version ?? 0)
-
-async function remoteRefresh() {
-  if (!session.value) return
-  remoteLoading.value = true
-  try {
-    const res = await organizerFetchState(session.value)
-    if (!res.ok) {
-      message.error(res.error ?? '拉取远程状态失败')
-      return
-    }
-    remoteState.value = res.team ?? null
-  } finally {
-    remoteLoading.value = false
-  }
+/** 同 submissionId 的更高 revision（修订提示用） */
+function hasNewerRevision(s: Submission): boolean {
+  return (props.team.submissions ?? []).some(
+    (o) => o.submissionId === s.submissionId && o.revision > s.revision,
+  )
 }
 
-async function remoteConfirm(s: Submission) {
+async function orgDecide(s: Submission, decision: 'confirmed' | 'rejected') {
   if (!session.value) return
-  remoteConfirming.value = s.submissionId
+  if (decision === 'confirmed') remoteConfirming.value = s.submissionId
   try {
-    const res = await organizerDecide(session.value, s.submissionId, s.revision, 'confirmed')
+    const note =
+      decision === 'rejected' ? (window.prompt('退回原因（可留空）') ?? '') : undefined
+    const res = await organizerDecide(
+      session.value,
+      s.submissionId,
+      s.revision,
+      decision,
+      note,
+    )
     if (!res.ok) {
-      message.error(res.error ?? '确认失败')
+      message.error(res.error ?? (decision === 'confirmed' ? '确认失败' : '退回失败'))
       return
     }
-    message.success(res.replay ? '此前已确认过（幂等重放）' : '已远程确认')
-    await remoteRefresh()
+    message.success(res.replay ? '此前已处理过（幂等重放）' : decision === 'confirmed' ? '已确认' : '已退回')
+    emit('changed')
   } finally {
     remoteConfirming.value = null
   }
 }
 
-async function remoteReject(s: Submission) {
-  if (!session.value) return
-  const note = window.prompt('退回原因（可留空）') ?? ''
-  const res = await organizerDecide(session.value, s.submissionId, s.revision, 'rejected', note)
-  if (!res.ok) {
-    message.error(res.error ?? '退回失败')
-    return
-  }
-  message.success('已远程退回')
-  await remoteRefresh()
-}
-// ---------- 远程审批加入 ----------
-const remoteApprovingId = ref<string | null>(null)
-
-const remotePendingJoinList = computed(() =>
-  (remoteState.value?.pendingJoins ?? []).filter((j) => j.status === 'pending'),
-)
-
-async function remoteDecideJoin(joinRequestId: string, decision: 'approved' | 'rejected') {
+async function orgDecideJoin(joinRequestId: string, decision: 'approved' | 'rejected') {
   if (!session.value) return
   remoteApprovingId.value = joinRequestId
   try {
@@ -172,37 +147,36 @@ async function remoteDecideJoin(joinRequestId: string, decision: 'approved' | 'r
       return
     }
     message.success(decision === 'approved' ? '已通过加入申请' : '已拒绝加入申请')
-    await remoteRefresh()
+    emit('changed')
   } finally {
     remoteApprovingId.value = null
   }
 }
 
-// ---------- 远程发布 ----------
-const remotePublishing = ref(false)
-
-async function remotePublishVersion() {
-  if (!session.value || !remoteState.value) return
-  const cur = remoteState.value
-  const baseText = window.prompt(
-    `发布第 ${(cur.latestPublication?.version ?? 0) + 1} 版。\n请输入发布说明（可选，仅记录用）：`,
-    '',
-  )
-  if (baseText === null) return // 用户取消
+async function orgPublish() {
+  if (!session.value) return
+  // 细节 A：发布说明（Release Note），非必填，最多 200 字
+  const note = window.prompt('发布说明（可选，最多 200 字，会写入快照并展示给成员）', '')
+  if (note === null) return
+  const releaseNote = note.trim().slice(0, 200)
   remotePublishing.value = true
   try {
-    const res = await organizerPublish(session.value, cur.draftRevision)
+    const res = await organizerPublish(
+      session.value,
+      props.team.draftRevision,
+      undefined,
+      releaseNote || undefined,
+    )
     if (!res.ok) {
       message.error(res.error ?? '发布失败')
       return
     }
-    message.success(`已远程发布第 ${res.version} 版，成员可领取`)
-    await remoteRefresh()
+    message.success(`已发布第 ${res.version} 版，成员可领取`)
+    emit('changed')
   } finally {
     remotePublishing.value = false
   }
 }
-// ---------- 领取 ----------
 
 const claiming = ref(false)
 
@@ -379,6 +353,16 @@ const checkpointOptions = computed(() =>
   (snapshot.value?.checkpoints ?? []).map((c) => ({ label: c.name, value: c.checkpointId })),
 )
 
+// ---------- 「更多」折叠菜单（细节 C：低频文件操作收纳） ----------
+const moreOptions = [
+  { label: '导入公共资料文件', key: 'import-public' },
+  { label: '导出我的报告', key: 'export-reports' },
+]
+function onMoreSelect(key: string) {
+  if (key === 'import-public') void pickPublicFile()
+  else if (key === 'export-reports') void exportMyReports()
+}
+
 // ---------- 文件兜底（离线传递） ----------
 
 const exporting = ref(false)
@@ -526,10 +510,6 @@ async function refresh() {
     <n-card title="领取公共版本" size="small">
       <template #header-extra>
         <div class="head-actions">
-          <n-button size="small" @click="pickPublicFile">
-            <template #icon><FileUp :size="14" /></template>
-            导入文件
-          </n-button>
           <n-button type="primary" size="small" :loading="claiming" @click="claim">
             <template #icon><Download :size="14" /></template>
             领取最新版
@@ -540,6 +520,10 @@ async function refresh() {
         本机保存：第 {{ snapshot.version }} 版（{{ snapshot.roster.length }} 名成员、{{ snapshot.items.length }} 项物资）
       </p>
       <p v-else class="muted small">还没有领取过任何版本。</p>
+      <n-alert v-if="snapshot && snapshot.releaseNote" type="info" :bordered="false" class="tip">
+        <strong>组织者寄语</strong>
+        <div style="margin-top: 4px; white-space: pre-wrap">{{ snapshot.releaseNote }}</div>
+      </n-alert>
       <p class="muted small">
         领取只保存团队公共资料与我的任务；你的私人行李、备忘和未上传草稿不受影响。
         连不上组织者时，可用对方给的资料文件导入（文件不证明身份，只更新本机团队视图）。
@@ -547,63 +531,59 @@ async function refresh() {
     </n-card>
 
 
-    <!-- 组织者远程操作：连接的主机上我是组织者时显示 -->
-    <n-card v-if="connectedAsOrganizer" title="组织者操作（远程主机）" size="small">
+    <!-- 组织者当面操作：扫码接入后当场确认/审批/发布（分工只在主机本机改） -->
+    <n-card v-if="connectedAsOrganizer" title="组织者操作" size="small">
       <p class="muted small">
-        手机主机只负责存储与会话；确认报告、审批加入、发布版本都在这里远程完成。
+        分工修改请在主机本机进行；这里用于接入后当场确认报告、审批加入与发布新版本。
       </p>
-      <div class="head-actions" style="margin-bottom: 8px">
-        <n-button size="small" :loading="remoteLoading" @click="remoteRefresh">
-          <template #icon><RefreshCw :size="14" /></template>
-          刷新远程状态
-        </n-button>
-      </div>
-      <p v-if="remoteState" class="muted small">
-        远程待审核 {{ remotePendingCount }} 条 · 待审批 {{ remotePendingJoins }} 条 · 已发布第 {{ remoteVersion }} 版
-      </p>
-      <p v-else class="muted small">尚未拉取远程状态。</p>
-      <div v-if="remoteState && remotePendingCount > 0" class="remote-sec">
+
+      <div v-if="orgPendingSubs.length > 0" class="remote-sec">
         <div class="sub-head"><strong>待审核报告</strong></div>
-        <div v-for="s in remotePendingSubs" :key="s.submissionId" class="row sub-row">
+        <div v-for="s in orgPendingSubs" :key="s.submissionId" class="row sub-row">
           <div class="grow">
-            <span class="num">{{ s.qty !== null ? s.qty : (s.amountFen !== null ? `¥${fenToYuan(s.amountFen)}` : "—") }}</span>
+            <span class="num">{{ s.qty !== null ? s.qty : (s.amountFen !== null ? `¥${fenToYuan(s.amountFen)}` : '—') }}</span>
             <span class="muted small"> {{ s.note }}</span>
+            <n-tag v-if="hasNewerRevision(s)" size="tiny" type="warning" :bordered="false">有更新</n-tag>
           </div>
-          <n-button size="small" type="primary" :loading="remoteConfirming === s.submissionId" @click="remoteConfirm(s)">确认</n-button>
-          <n-button size="small" @click="remoteReject(s)">退回</n-button>
+          <n-button size="small" type="primary" :loading="remoteConfirming === s.submissionId" @click="orgDecide(s, 'confirmed')">确认</n-button>
+          <n-button size="small" :loading="remoteConfirming === s.submissionId" @click="orgDecide(s, 'rejected')">退回</n-button>
         </div>
       </div>
-    </n-card>
-      <div v-if="remoteState && remotePendingJoinList.length > 0" class="remote-sec">
+
+      <div v-if="team.pendingJoins.length > 0" class="remote-sec">
         <div class="sub-head"><strong>待审批加入</strong></div>
-        <div v-for="j in remotePendingJoinList" :key="j.joinRequestId" class="row sub-row">
+        <div v-for="j in team.pendingJoins" :key="j.joinRequestId" class="row sub-row">
           <div class="grow">
             <strong>{{ j.memberName }}</strong>
           </div>
-          <n-button size="small" type="primary" :loading="remoteApprovingId === j.joinRequestId" @click="remoteDecideJoin(j.joinRequestId, 'approved')">通过</n-button>
-          <n-button size="small" :loading="remoteApprovingId === j.joinRequestId" @click="remoteDecideJoin(j.joinRequestId, 'rejected')">拒绝</n-button>
+          <n-button size="small" type="primary" :loading="remoteApprovingId === j.joinRequestId" @click="orgDecideJoin(j.joinRequestId, 'approved')">通过</n-button>
+          <n-button size="small" :loading="remoteApprovingId === j.joinRequestId" @click="orgDecideJoin(j.joinRequestId, 'rejected')">拒绝</n-button>
         </div>
       </div>
-      <div v-if="remoteState" style="margin-top: 8px">
-        <n-button type="primary" block :loading="remotePublishing" @click="remotePublishVersion">
-          发布第 {{ (remoteState.latestPublication?.version ?? 0) + 1 }} 版
+
+      <div style="margin-top: 8px">
+        <n-button type="primary" block :loading="remotePublishing" @click="orgPublish">
+          发布第 {{ (team.latestPublication?.version ?? 0) + 1 }} 版
         </n-button>
         <p class="muted small" style="margin-top: 4px">
-          发布会生成不可变公共快照，成员领取后回执自动记录。发布前请先确认所有待审报告。
+          可附一句发布说明（写入快照展示给成员）。发布前请先确认所有待审报告。
         </p>
       </div>
-    <!-- 我的任务 -->
+    </n-card>
     <n-card title="我的任务" size="small">
       <template #header-extra>
         <div class="head-actions">
-          <n-button size="small" :loading="exporting" @click="exportMyReports">
-            <template #icon><FileDown :size="14" /></template>
-            导出报告
-          </n-button>
           <n-button size="small" :disabled="myAssignments.length === 0" @click="openReport">
             <template #icon><Upload :size="14" /></template>
             上报
           </n-button>
+          <!-- 细节 C：低频的文件导入导出收进「更多」折叠菜单 -->
+          <n-dropdown trigger="click" :options="moreOptions" @select="onMoreSelect">
+            <n-button size="small" tertiary>
+              <template #icon><MoreHorizontal :size="14" /></template>
+              更多
+            </n-button>
+          </n-dropdown>
         </div>
       </template>
       <p v-if="myAssignments.length === 0" class="muted small">

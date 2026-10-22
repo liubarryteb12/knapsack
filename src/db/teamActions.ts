@@ -581,6 +581,8 @@ export interface PublishInput {
    */
   expectedPreviewDigest?: string
   itinerary?: PublicSnapshot['itinerary']
+  /** 组织者发布寄语（细节 A）：随不可变快照落库，成员端领取后展示 */
+  releaseNote?: string
 }
 
 export type PublishResult =
@@ -643,7 +645,7 @@ export async function publishSnapshot(input: PublishInput): Promise<PublishResul
 
       // buildPublicSnapshot 内部已算好 digest；itinerary 是发布时才补的字段，
       // 因此只有补了 itinerary 才需要重算一次（避免每次发布都做两次全量摘要）。
-      const snapshot = buildPublicSnapshot(parsed, publicationId, version, createdAt)
+      const snapshot = buildPublicSnapshot(parsed, publicationId, version, createdAt, input.releaseNote ?? '')
       if (input.itinerary) {
         snapshot.itinerary = toPlain(input.itinerary)
         snapshot.digest = digestOf({ ...snapshot, digest: '' })

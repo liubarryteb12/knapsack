@@ -3,7 +3,7 @@
  * 主机 · 汇总与确认：待审核报告、缺口总表。
  * 只有组织者确认后，数量/费用才进入「当前确认量」；未确认不伪装成事实（SPEC 3.4/3.3）。
  */
-import { computed, ref } from 'vue'
+import { computed, ref, reactive } from 'vue'
 import { NAlert, NButton, NCard, NInput, NModal, NSelect, NTag, useMessage } from 'naive-ui'
 import { Check, X, FileUp } from '@lucide/vue'
 import { acceptSubmission, decideSubmission } from '../../db/teamActions'
@@ -25,7 +25,46 @@ const stageLabel: Record<string, string> = {
   count: '清点',
 }
 
-const pending = computed(() => props.team.submissions.filter((s) => s.review === 'submitted'))
+/**
+ * 待审核报告。同 submissionId 存在更早 revision 时，附带旧版数据用于
+ * 「已修订」角标与前后对比（细节 B）。
+ */
+const pending = computed(() =>
+  props.team.submissions
+    // 同 submissionId 已有更高 revision 在待审/已确认时，旧行不重复占位——
+    // 它的信息由新版的「已修订」角标与对比区承载（细节 B）
+    .filter(
+      (s) =>
+        s.review === 'submitted' &&
+        !props.team.submissions.some(
+          (o) =>
+            o.submissionId === s.submissionId &&
+            o.revision > s.revision &&
+            (o.review === 'submitted' || o.review === 'confirmed'),
+        ),
+    )
+    .map((s) => {
+      const older = props.team.submissions
+        .filter((o) => o.submissionId === s.submissionId && o.revision < s.revision)
+        .sort((a, b) => b.revision - a.revision)
+      return { sub: s, prev: older[0] ?? null }
+    }),
+)
+/** 展开状态：记录正在对比的 submissionId */
+const diffOpen = reactive<Record<string, boolean>>({})
+function toggleDiff(submissionId: string) {
+  diffOpen[submissionId] = !diffOpen[submissionId]
+}
+/** 前后数值差异描述：只列真正变了的字段（细节 B） */
+function diffText(a: Submission, b: Submission): string[] {
+  const out: string[] = []
+  if (a.qty !== b.qty) out.push(`数量 ${a.qty ?? '—'} → ${b.qty ?? '—'}`)
+  if (a.amountFen !== b.amountFen) {
+    out.push(`金额 ${a.amountFen !== null ? fenToYuan(a.amountFen) : '—'} → ${b.amountFen !== null ? fenToYuan(b.amountFen) : '—'} 元`)
+  }
+  if (a.note !== b.note) out.push(`备注「${a.note || '（空）'}」→「${b.note || '（空）'}」`)
+  return out
+}
 
 function memberName(memberId: string): string {
   return props.team.roster.find((m) => m.memberId === memberId)?.name ?? '（已移除成员）'
@@ -287,26 +326,39 @@ const rows = computed(() =>
         </n-button>
       </template>
       <p v-if="pending.length === 0" class="muted small">暂无待审核报告。</p>
-      <div v-for="s in pending" :key="`${s.submissionId}-${s.revision}`" class="row sub-row">
+      <div v-for="r in pending" :key="`${r.sub.submissionId}-${r.sub.revision}`" class="row sub-row">
         <div class="grow">
           <div class="sub-head">
-            <strong>{{ memberName(s.authorMemberId) }}</strong>
-            <n-tag size="tiny" :bordered="false">{{ stageLabel[s.stage] ?? s.stage }}</n-tag>
-            <span class="muted small">{{ itemName(s.allocationId) }}</span>
-            <span v-if="s.checkpointId" class="muted small">@ {{ checkpointName(s.checkpointId) }}</span>
+            <strong>{{ memberName(r.sub.authorMemberId) }}</strong>
+            <n-tag size="tiny" :bordered="false">{{ stageLabel[r.sub.stage] ?? r.sub.stage }}</n-tag>
+            <span class="muted small">{{ itemName(r.sub.allocationId) }}</span>
+            <span v-if="r.sub.checkpointId" class="muted small">@ {{ checkpointName(r.sub.checkpointId) }}</span>
+            <!-- 细节 B：醒目「已修订」角标 -->
+            <n-tag v-if="r.prev" size="tiny" type="warning" :bordered="false" class="rev-badge">
+              已修订 · 第 {{ r.sub.revision }} 版
+            </n-tag>
           </div>
           <div class="sub-body">
-            <span class="num">{{ describe(s) }}</span>
-            <span v-if="s.qty !== null && s.amountFen !== null" class="muted small">（数量 {{ s.qty }}）</span>
-            <span v-if="s.note" class="muted small">备注：{{ s.note }}</span>
-            <span v-if="s.revision > 1" class="muted small">第 {{ s.revision }} 次修订</span>
+            <span class="num">{{ describe(r.sub) }}</span>
+            <span v-if="r.sub.qty !== null && r.sub.amountFen !== null" class="muted small">（数量 {{ r.sub.qty }}）</span>
+            <span v-if="r.sub.note" class="muted small">备注：{{ r.sub.note }}</span>
+          </div>
+          <!-- 细节 B：展开对比修改前后的数值差异 -->
+          <div v-if="r.prev" class="diff-area">
+            <n-button text size="tiny" @click="toggleDiff(r.sub.submissionId)">
+              {{ diffOpen[r.sub.submissionId] ? '收起对比' : '查看改了什么' }}
+            </n-button>
+            <div v-if="diffOpen[r.sub.submissionId]" class="diff-box">
+              <div class="muted small">原第 {{ r.prev.revision }} 版：{{ describe(r.prev) }}</div>
+              <div v-for="d in diffText(r.prev, r.sub)" :key="d" class="diff-line">• {{ d }}</div>
+            </div>
           </div>
         </div>
-        <n-button size="small" type="primary" @click="confirm(s)">
+        <n-button size="small" type="primary" @click="confirm(r.sub)">
           <template #icon><Check :size="14" /></template>
           确认
         </n-button>
-        <n-button size="small" @click="openReject(s)">
+        <n-button size="small" @click="openReject(r.sub)">
           <template #icon><X :size="14" /></template>
           退回
         </n-button>

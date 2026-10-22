@@ -209,6 +209,7 @@ export function buildPublicSnapshot(
   publicationId: string,
   version: number,
   createdAt: number,
+  releaseNote = '',
 ): PublicSnapshot {
   const confirmed = currentConfirmedQty(team.submissions)
 
@@ -307,6 +308,7 @@ export function buildPublicSnapshot(
     version,
     sourceDraftRevision: team.draftRevision,
     createdAt,
+    releaseNote,
     digest: '',
     roster: team.roster.map((m) => ({ memberId: m.memberId, name: m.name, role: m.role })),
     itinerary: null,

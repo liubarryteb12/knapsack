@@ -33,12 +33,10 @@ import {
   registerJoinRequest,
   getJoinStatus,
   resolveActor,
-  getTeam,
   decideSubmission,
   approveJoin,
   rejectJoin,
   publishSnapshot,
-  saveTeam,
   withdrawSubmission,
 } from '../db/teamActions'
 import type { TeamState, PublicSnapshot } from './schema'
@@ -248,11 +246,6 @@ async function dispatchAction(envelope: TeamEnvelope, sessionClientPub?: string)
       return errResponse('只有组织者能执行这个操作')
     }
     switch (envelope.type) {
-      case 'organizer.state': {
-        const t = await getTeam(teamId)
-        if (!t) return errResponse('团队不存在')
-        return okResponse({ team: { ...t, credentialSecret: null } })
-      }
       case 'organizer.decision': {
         const res = await decideSubmission({
           teamId,
@@ -294,14 +287,9 @@ async function dispatchAction(envelope: TeamEnvelope, sessionClientPub?: string)
           expectedPreviewDigest:
             typeof p.expectedPreviewDigest === 'string' ? p.expectedPreviewDigest : undefined,
           itinerary: p.itinerary as PublicSnapshot['itinerary'] | undefined,
+          releaseNote: typeof p.releaseNote === 'string' ? p.releaseNote : undefined,
         })
         return res.ok ? toResponse(res) : errResponse(res.error)
-      }
-      case 'organizer.teamEdit': {
-        const draft = p.team as TeamState | undefined
-        if (!draft || draft.teamId !== teamId) return errResponse('编辑载荷缺少团队标识')
-        const res = await saveTeam({ ...draft, draftRevision: Number(p.draftRevision ?? draft.draftRevision ?? 0) })
-        return toResponse({ ok: true, team: { ...res, credentialSecret: null } })
       }
       default:
         return errResponse('未知组织者动作')

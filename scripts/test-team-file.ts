@@ -125,6 +125,7 @@ check(
       'itinerary',
       'publicationId',
       'roster',
+      'releaseNote',
       'sourceDraftRevision',
       'teamId',
       'version',
