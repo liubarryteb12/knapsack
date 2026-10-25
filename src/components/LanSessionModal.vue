@@ -121,7 +121,7 @@ async function applyPushedTrip(raw: unknown) {
     message.error('接入方推来的不是本会话共享的行程，已拒绝写入')
     return
   }
-  const local = tripsStore.trips.find((t) => t.id === incoming.id)
+  const local = await tripsStore.getTrip(incoming.id)
   if (!local) {
     // 本机没有这份行程：直接保存为新行程，不存在覆盖风险
     await tripsStore.importTrip(incoming, 'asNew')
@@ -244,7 +244,7 @@ async function doPull() {
       message.error('主机返回的不是本会话共享的行程，已拒绝写入')
       return
     }
-    const local = tripsStore.trips.find((t) => t.id === incoming.id)
+    const local = await tripsStore.getTrip(incoming.id)
     if (!local) {
       await tripsStore.importTrip(incoming, 'asNew')
       message.success(`已拉取为「${incoming.name}」`)

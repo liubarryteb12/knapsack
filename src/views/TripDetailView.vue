@@ -1,18 +1,19 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NButton, NTabs, NTabPane } from 'naive-ui'
 import { ChevronLeft, MonitorSmartphone } from '@lucide/vue'
 import { useTripsStore } from '../stores/trips'
 import TimelineTab from '../components/TimelineTab.vue'
-import BudgetTab from '../components/BudgetTab.vue'
-import PackingTab from '../components/PackingTab.vue'
-import NotesTab from '../components/NotesTab.vue'
 import WeatherStrip from '../components/WeatherStrip.vue'
-import LanSessionModal from '../components/LanSessionModal.vue'
 import UiStatusBadge from '../components/ui/UiStatusBadge.vue'
 import { destTypeIcon } from '../components/icons'
 import type { Trip } from '../schema/trip'
+
+const BudgetTab = defineAsyncComponent(() => import('../components/BudgetTab.vue'))
+const PackingTab = defineAsyncComponent(() => import('../components/PackingTab.vue'))
+const NotesTab = defineAsyncComponent(() => import('../components/NotesTab.vue'))
+const LanSessionModal = defineAsyncComponent(() => import('../components/LanSessionModal.vue'))
 
 const route = useRoute()
 const router = useRouter()
@@ -23,14 +24,14 @@ const trip = computed<Trip | undefined>(() => tripsStore.trips.find((t) => t.id 
 const tab = ref('timeline')
 const showLan = ref(false)
 
-// 直达路由（刷新/分享链接）时 store 尚未加载，先 load 再兜底查库
+// 直达路由（刷新/分享链接）时按需读取完整聚合根，列表页只保留摘要。
 onMounted(async () => {
-  if (!tripsStore.loaded) await tripsStore.load()
+  await tripsStore.getTrip(tripId.value)
 })
 
 watch(tripId, async () => {
   tab.value = 'timeline'
-  if (!tripsStore.loaded) await tripsStore.load()
+  await tripsStore.getTrip(tripId.value)
 })
 </script>
 
@@ -61,18 +62,18 @@ watch(tripId, async () => {
         <WeatherStrip :key="trip.id" :trip="trip" />
         <TimelineTab :trip="trip" />
       </n-tab-pane>
-      <n-tab-pane v-if="trip.enabledModules.expenses" name="budget" tab="预算">
+      <n-tab-pane v-if="trip.enabledModules.expenses" name="budget" tab="预算" display-directive="if">
         <BudgetTab :trip="trip" />
       </n-tab-pane>
-      <n-tab-pane name="packing" tab="行李">
+      <n-tab-pane name="packing" tab="行李" display-directive="if">
         <PackingTab :trip="trip" />
       </n-tab-pane>
-      <n-tab-pane v-if="trip.enabledModules.notes" name="notes" tab="备忘">
+      <n-tab-pane v-if="trip.enabledModules.notes" name="notes" tab="备忘" display-directive="if">
         <NotesTab :trip="trip" />
       </n-tab-pane>
     </n-tabs>
 
-    <LanSessionModal v-if="trip" v-model:show="showLan" :trip="trip" />
+    <LanSessionModal v-if="trip && showLan" v-model:show="showLan" :trip="trip" />
   </div>
   <div v-else class="page">
     <p class="muted">旅行不存在或正在加载…</p>

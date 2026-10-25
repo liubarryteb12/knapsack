@@ -4,10 +4,10 @@
  * 只有组织者确认后，数量/费用才进入「当前确认量」；未确认不伪装成事实（SPEC 3.4/3.3）。
  */
 import { computed, ref, reactive } from 'vue'
-import { NAlert, NButton, NCard, NInput, NModal, NSelect, NTag, useMessage } from 'naive-ui'
-import { Check, X, FileUp } from '@lucide/vue'
+import { NAlert, NButton, NCard, NDropdown, NInput, NModal, NSelect, NTag, useMessage } from 'naive-ui'
+import { Check, X, MoreHorizontal } from '@lucide/vue'
 import { acceptSubmission, decideSubmission } from '../../db/teamActions'
-import { currentConfirmedQty, summarizeAllocation } from '../../team/domain'
+import { currentConfirmedQty, digestOf, summarizeAllocation } from '../../team/domain'
 import { confirmKeyString, newId } from '../../team/protocol'
 import { dedupeSubmissions, parseSubmissionFile } from '../../team/teamFile'
 import { pickTextFile } from '../../utils/fileBridge'
@@ -135,7 +135,7 @@ async function submitReject() {
   const res = await decideSubmission({
     teamId: props.team.teamId,
     organizerMemberId: organizerId,
-    operationId: `reject-${s.submissionId}-${s.revision}-${Date.now().toString(36)}`,
+    operationId: `reject-${s.submissionId}-${s.revision}-${digestOf({ note: rejectNote.value.trim() })}`,
     submissionId: s.submissionId,
     revision: s.revision,
     decision: 'rejected',
@@ -195,6 +195,10 @@ function draftOf(s: Submission) {
 async function pickReportFile() {
   const picked = await pickTextFile('.team-submit,application/json')
   if (!picked) return
+  if ('error' in picked) {
+    message.error(picked.error)
+    return
+  }
   try {
     const file = parseSubmissionFile(picked.text)
     if (file.teamId !== props.team.teamId) {
@@ -215,6 +219,11 @@ async function pickReportFile() {
   } catch (e) {
     message.error(e instanceof Error ? e.message : String(e))
   }
+}
+
+const moreOptions = [{ label: '导入报告文件', key: 'import-report' }]
+function onMoreSelect(key: string) {
+  if (key === 'import-report') void pickReportFile()
 }
 
 async function confirmImport() {
@@ -320,10 +329,12 @@ const rows = computed(() =>
     <!-- 待审核 -->
     <n-card title="待审核报告" size="small">
       <template #header-extra>
-        <n-button size="small" @click="pickReportFile">
-          <template #icon><FileUp :size="14" /></template>
-          导入报告文件
-        </n-button>
+        <n-dropdown trigger="click" :options="moreOptions" @select="onMoreSelect">
+          <n-button size="small" tertiary>
+            <template #icon><MoreHorizontal :size="14" /></template>
+            更多
+          </n-button>
+        </n-dropdown>
       </template>
       <p v-if="pending.length === 0" class="muted small">暂无待审核报告。</p>
       <div v-for="r in pending" :key="`${r.sub.submissionId}-${r.sub.revision}`" class="row sub-row">

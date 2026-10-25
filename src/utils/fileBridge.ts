@@ -17,6 +17,11 @@ export interface SaveFileResult {
   error?: string
 }
 
+export type PickTextFileResult =
+  | { name: string; text: string }
+  | { error: string }
+  | null
+
 /** 触发浏览器下载（web 兜底） */
 export function downloadTextFile(filename: string, text: string, mime = 'application/json'): void {
   const blob = new Blob([text], { type: mime })
@@ -75,14 +80,14 @@ export async function saveTextFile(
  */
 export function pickTextFile(
   accept = '.team-public,.team-submit,application/json',
-): Promise<{ name: string; text: string } | null> {
+): Promise<PickTextFileResult> {
   return new Promise((resolve) => {
     const input = document.createElement('input')
     input.type = 'file'
     input.accept = accept
     input.style.display = 'none'
     let settled = false
-    const finish = (v: { name: string; text: string } | null) => {
+    const finish = (v: PickTextFileResult) => {
       if (settled) return
       settled = true
       input.remove()
@@ -96,8 +101,8 @@ export function pickTextFile(
       }
       try {
         finish({ name: file.name, text: await file.text() })
-      } catch {
-        finish(null)
+      } catch (e) {
+        finish({ error: `读取文件失败：${e instanceof Error ? e.message : String(e)}` })
       }
     }
     // 现代 WebView 支持 cancel 事件；不支持时靠下一次选择覆盖

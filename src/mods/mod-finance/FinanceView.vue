@@ -1,0 +1,597 @@
+<script setup lang="ts">
+import { computed, onMounted, ref, watch } from 'vue'
+import {
+  NAlert,
+  NButton,
+  NCard,
+  NCheckbox,
+  NCheckboxGroup,
+  NInput,
+  NModal,
+  NPopconfirm,
+  NSelect,
+  NTag,
+  useMessage,
+} from 'naive-ui'
+import {
+  Download,
+  Pencil,
+  Plus,
+  ReceiptText,
+  Trash2,
+  TrendingUp,
+  Wallet,
+} from '@lucide/vue'
+import UiPageHeader from '../../components/ui/UiPageHeader.vue'
+import UiStatCard from '../../components/ui/UiStatCard.vue'
+import { db } from '../../db'
+import { todayStr } from '../../utils/date'
+import { fenToYuan, formatFen, yuanToFen } from '../../utils/money'
+import {
+  FINANCE_CATEGORY_LABELS,
+  travelCategoryToFinance,
+  type FinanceCategory,
+  type FinanceEntry,
+} from './schema'
+import { categoryBreakdown, entriesInMonth, last7Days, sumFen } from './stats'
+import { useFinanceStore, type TripExpenseSelection } from './store'
+
+const store = useFinanceStore()
+const message = useMessage()
+const today = todayStr()
+const month = ref(today.slice(0, 7))
+const categoryFilter = ref<'all' | FinanceCategory>('all')
+
+const categoryOptions = (Object.entries(FINANCE_CATEGORY_LABELS) as [FinanceCategory, string][]).map(
+  ([value, label]) => ({ value, label }),
+)
+const filterOptions = [{ value: 'all', label: '全部类别' }, ...categoryOptions]
+
+onMounted(() => {
+  void store.load()
+})
+
+watch(month, (value) => {
+  void store.loadMonth(value)
+})
+
+const monthEntries = computed(() => entriesInMonth(store.entries, month.value))
+const filteredEntries = computed(() =>
+  categoryFilter.value === 'all'
+    ? monthEntries.value
+    : monthEntries.value.filter((e) => e.category === categoryFilter.value),
+)
+const monthTotal = computed(() => sumFen(monthEntries.value))
+const todayTotal = computed(() => sumFen(store.entries.filter((e) => e.date === today)))
+const breakdown = computed(() => categoryBreakdown(monthEntries.value))
+const trend = computed(() => last7Days(store.entries, today))
+const trendMax = computed(() => Math.max(1, ...trend.value.map((d) => d.totalFen)))
+
+function categoryLabel(category: FinanceCategory): string {
+  return FINANCE_CATEGORY_LABELS[category]
+}
+
+function barWidth(value: number, max: number): string {
+  if (value <= 0) return '0%'
+  return `${Math.max(3, Math.round((value / max) * 100))}%`
+}
+
+const quick = ref({
+  date: today,
+  amountYuan: '',
+  category: 'food' as FinanceCategory,
+  note: '',
+})
+
+async function addQuick() {
+  const amountFen = yuanToFen(quick.value.amountYuan)
+  if (amountFen === null || amountFen <= 0) {
+    message.error('金额格式不对：请填大于 0 的两位小数以内数字')
+    return
+  }
+  const entry = await store.add({
+    date: quick.value.date,
+    amountFen,
+    category: quick.value.category,
+    note: quick.value.note.trim(),
+  })
+  if (!entry) {
+    message.error(store.error || '记账失败')
+    return
+  }
+  quick.value.amountYuan = ''
+  quick.value.note = ''
+  message.success('已记一笔，只保存在本机')
+}
+
+const editing = ref<FinanceEntry | null>(null)
+const editForm = ref({
+  date: '',
+  amountYuan: '',
+  category: 'food' as FinanceCategory,
+  note: '',
+})
+
+function openEdit(entry: FinanceEntry) {
+  editing.value = entry
+  editForm.value = {
+    date: entry.date,
+    amountYuan: fenToYuan(entry.amountFen),
+    category: entry.category,
+    note: entry.note,
+  }
+}
+
+async function saveEdit() {
+  const entry = editing.value
+  if (!entry) return
+  const amountFen = yuanToFen(editForm.value.amountYuan)
+  if (amountFen === null || amountFen <= 0) {
+    message.error('金额格式不对：请填大于 0 的两位小数以内数字')
+    return
+  }
+  const ok = await store.update(entry.id, {
+    date: editForm.value.date,
+    amountFen,
+    category: editForm.value.category,
+    note: editForm.value.note.trim(),
+  })
+  if (!ok) {
+    message.error(store.error || '保存失败')
+    return
+  }
+  editing.value = null
+  message.success('账目已更新')
+}
+
+async function removeEntry(entry: FinanceEntry) {
+  if (!(await store.remove(entry.id))) message.error(store.error || '删除失败')
+}
+
+const showImport = ref(false)
+const importRows = ref<TripExpenseSelection[]>([])
+const selectedImport = ref<string[]>([])
+const importing = ref(false)
+
+function importKey(item: TripExpenseSelection): string {
+  return `${item.tripId}:${item.expense.id}`
+}
+
+function alreadyImported(item: TripExpenseSelection): boolean {
+  const key = `trip:${item.tripId}:${item.expense.id}`
+  return store.entries.some((e) => e.sourceKey === key)
+}
+
+async function openImport() {
+  const trips = await db.trips.toArray()
+  importRows.value = trips.flatMap((trip) =>
+    trip.expenses.map((expense) => ({
+      tripId: trip.id,
+      tripName: trip.name,
+      expense,
+    })),
+  )
+  selectedImport.value = []
+  showImport.value = true
+}
+
+async function doImport() {
+  const selections = importRows.value.filter((item) =>
+    selectedImport.value.includes(importKey(item)),
+  )
+  if (selections.length === 0) {
+    message.warning('先选择要导入的旅行花费')
+    return
+  }
+  importing.value = true
+  const result = await store.importFromTrips(selections)
+  importing.value = false
+  if (result.error) {
+    message.error(result.error)
+    return
+  }
+  message.success(`导入 ${result.imported} 笔，跳过已存在 ${result.skipped} 笔`)
+  showImport.value = false
+}
+
+function importAmount(item: TripExpenseSelection): string {
+  return formatFen(item.expense.amountFen)
+}
+</script>
+
+<template>
+  <div class="finance-page">
+    <UiPageHeader title="日常账房" subtitle="只记录本机花费与消费结构，不接支付、转账或金融接口">
+      <div class="month-control">
+        <input v-model="month" class="month-input" type="month" aria-label="账目月份" />
+        <n-button @click="openImport">
+          <template #icon><Download :size="15" /></template>
+          导入旅行花费
+        </n-button>
+      </div>
+    </UiPageHeader>
+
+    <n-alert v-if="store.error" type="warning" :bordered="false" class="error-alert">
+      {{ store.error }}
+    </n-alert>
+
+    <div class="stats-row">
+      <UiStatCard :icon="Wallet" label="本月支出" :value="formatFen(monthTotal)" />
+      <UiStatCard :icon="ReceiptText" label="本月笔数" :value="String(monthEntries.length)" />
+      <UiStatCard :icon="TrendingUp" label="今日支出" :value="formatFen(todayTotal)" />
+    </div>
+
+    <n-card size="small" class="section" title="快速记一笔">
+      <div class="quick-form">
+        <input v-model="quick.date" class="field-input" type="date" aria-label="记账日期" />
+        <n-input v-model:value="quick.amountYuan" placeholder="金额，例如 36.50" />
+        <n-select v-model:value="quick.category" :options="categoryOptions" class="category-select" />
+        <n-input v-model:value="quick.note" placeholder="备注（可选）" @keyup.enter="addQuick" />
+        <n-button type="primary" :loading="store.saving" @click="addQuick">
+          <template #icon><Plus :size="15" /></template>
+          记一笔
+        </n-button>
+      </div>
+    </n-card>
+
+    <div class="two-col">
+      <n-card size="small" title="消费结构">
+        <div v-if="breakdown.length === 0" class="empty">本月还没有账目。</div>
+        <div v-for="item in breakdown" :key="item.category" class="bar-row">
+          <div class="bar-label">
+            <span>{{ item.label }}</span>
+            <span class="muted">{{ formatFen(item.totalFen) }} · {{ item.percent.toFixed(1) }}%</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill" :style="{ width: barWidth(item.totalFen, monthTotal || 1) }" />
+          </div>
+        </div>
+      </n-card>
+
+      <n-card size="small" title="近 7 日趋势">
+        <div class="trend">
+          <div v-for="day in trend" :key="day.date" class="trend-col">
+            <span class="trend-value">{{ day.totalFen > 0 ? fenToYuan(day.totalFen) : '' }}</span>
+            <div class="trend-track">
+              <div class="trend-fill" :style="{ height: barWidth(day.totalFen, trendMax) }" />
+            </div>
+            <span class="trend-date">{{ day.date.slice(5) }}</span>
+          </div>
+        </div>
+      </n-card>
+    </div>
+
+    <n-card size="small" title="账目明细">
+      <template #header-extra>
+        <n-select
+          v-model:value="categoryFilter"
+          :options="filterOptions"
+          size="small"
+          class="filter-select"
+        />
+      </template>
+      <div v-if="filteredEntries.length === 0" class="empty">这个筛选下没有账目。</div>
+      <div v-for="entry in filteredEntries" :key="entry.id" class="entry-row">
+        <div class="entry-main">
+          <div class="entry-title">
+            <n-tag size="tiny" :bordered="false">{{ categoryLabel(entry.category) }}</n-tag>
+            <strong>{{ entry.note || '未填写备注' }}</strong>
+            <n-tag v-if="entry.source === 'trip'" size="tiny" type="info" :bordered="false">旅行导入</n-tag>
+          </div>
+          <span class="muted">{{ entry.date }}</span>
+        </div>
+        <strong class="amount">{{ formatFen(entry.amountFen) }}</strong>
+        <n-button quaternary circle size="small" aria-label="编辑账目" @click="openEdit(entry)">
+          <template #icon><Pencil :size="15" /></template>
+        </n-button>
+        <n-popconfirm @positive-click="removeEntry(entry)">
+          <template #trigger>
+            <n-button quaternary circle size="small" aria-label="删除账目">
+              <template #icon><Trash2 :size="15" /></template>
+            </n-button>
+          </template>
+          删除这笔账目？
+        </n-popconfirm>
+      </div>
+    </n-card>
+
+    <n-modal
+      :show="!!editing"
+      preset="card"
+      title="编辑账目"
+      style="width: min(480px, calc(100vw - 32px))"
+      @update:show="(v: boolean) => { if (!v) editing = null }"
+    >
+      <div class="edit-form">
+        <label>日期</label>
+        <input v-model="editForm.date" class="field-input" type="date" />
+        <label>金额（元）</label>
+        <n-input v-model:value="editForm.amountYuan" placeholder="例如 36.50" />
+        <label>类别</label>
+        <n-select v-model:value="editForm.category" :options="categoryOptions" />
+        <label>备注</label>
+        <n-input v-model:value="editForm.note" type="textarea" :rows="3" placeholder="备注（可选）" />
+      </div>
+      <template #footer>
+        <div class="modal-foot">
+          <n-button @click="editing = null">取消</n-button>
+          <n-button type="primary" :loading="store.saving" @click="saveEdit">保存</n-button>
+        </div>
+      </template>
+    </n-modal>
+
+    <n-modal
+      v-model:show="showImport"
+      preset="card"
+      title="导入旅行花费"
+      style="width: min(680px, calc(100vw - 32px))"
+    >
+      <p class="muted small">
+        只读取旅行模块的花费并复制一份到账房，不会修改旅行账本；同一笔花费重复导入会自动跳过。
+      </p>
+      <div v-if="importRows.length === 0" class="empty">还没有旅行花费可导入。</div>
+      <n-checkbox-group v-else v-model:value="selectedImport">
+        <div v-for="item in importRows" :key="importKey(item)" class="import-row">
+          <n-checkbox :value="importKey(item)" :disabled="alreadyImported(item)" />
+          <div class="import-main">
+            <strong>{{ item.expense.title }}</strong>
+            <span class="muted small">
+              {{ item.tripName }} · {{ item.expense.date }} · {{ categoryLabel(travelCategoryToFinance(item.expense.category)) }}
+            </span>
+          </div>
+          <span class="amount">{{ importAmount(item) }}</span>
+          <n-tag v-if="alreadyImported(item)" size="tiny" :bordered="false">已导入</n-tag>
+        </div>
+      </n-checkbox-group>
+      <template #footer>
+        <div class="modal-foot">
+          <n-button @click="showImport = false">取消</n-button>
+          <n-button type="primary" :loading="importing" @click="doImport">导入所选</n-button>
+        </div>
+      </template>
+    </n-modal>
+  </div>
+</template>
+
+<style scoped>
+.finance-page {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: var(--space-6);
+}
+
+.month-control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.month-input,
+.field-input {
+  min-height: 34px;
+  padding: 4px 9px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--radius-md);
+  background: var(--app-card-bg);
+  color: var(--app-text);
+  font: inherit;
+}
+
+.stats-row {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+}
+
+.error-alert {
+  margin-bottom: var(--space-3);
+}
+
+.section {
+  margin-bottom: var(--space-4);
+}
+
+.quick-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.quick-form :deep(.n-input) {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.quick-form .field-input {
+  flex: 0 1 145px;
+}
+
+.quick-form .category-select {
+  flex: 0 1 120px;
+  min-width: 120px;
+}
+
+.quick-form .n-button {
+  flex: 0 0 auto;
+}
+
+.two-col {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.bar-row {
+  margin-bottom: var(--space-3);
+}
+
+.bar-label {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.bar-track {
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: var(--app-accent-tint);
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--app-accent-solid);
+}
+
+.trend {
+  height: 180px;
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  padding-top: var(--space-5);
+}
+
+.trend-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.trend-value {
+  height: 18px;
+  color: var(--app-muted);
+  font-size: 10px;
+}
+
+.trend-track {
+  width: 100%;
+  height: 100px;
+  display: flex;
+  align-items: flex-end;
+  border-radius: var(--radius-sm);
+  background: var(--app-accent-tint);
+  overflow: hidden;
+}
+
+.trend-fill {
+  width: 100%;
+  min-height: 0;
+  background: var(--app-accent-solid);
+}
+
+.trend-date {
+  color: var(--app-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.filter-select {
+  width: 130px;
+}
+
+.entry-row,
+.import-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--app-border);
+}
+
+.entry-main,
+.import-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.entry-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.entry-title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.amount {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.edit-form > label {
+  color: var(--app-muted);
+  font-size: var(--text-xs);
+}
+
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.empty {
+  padding: var(--space-6) var(--space-2);
+  color: var(--app-muted-soft);
+  font-size: var(--text-sm);
+}
+
+.muted {
+  color: var(--app-muted);
+}
+
+.small {
+  font-size: var(--text-xs);
+}
+
+@media (max-width: 760px) {
+  .finance-page {
+    padding: var(--space-4);
+  }
+
+  .month-control {
+    justify-content: space-between;
+  }
+
+  .quick-form {
+    display: flex;
+  }
+
+  .quick-form :deep(.n-input),
+  .quick-form .category-select,
+  .quick-form .field-input,
+  .quick-form .n-button {
+    flex: 1 1 100%;
+  }
+
+  .two-col {
+    grid-template-columns: 1fr;
+  }
+
+  .entry-row {
+    flex-wrap: wrap;
+  }
+
+  .entry-main {
+    flex-basis: 100%;
+  }
+}
+</style>

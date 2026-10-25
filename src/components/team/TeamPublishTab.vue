@@ -107,26 +107,28 @@ async function copyTicket() {
 
 // ---------- 发布 ----------
 
-const preview = computed(() => buildPublicSnapshot(props.team, 'preview', 0, Date.now()))
+// 预览摘要必须可复现：时间戳一旦参与摘要，主机的“预览后未变化”校验会永远失败。
+const preview = computed(() => buildPublicSnapshot(props.team, 'preview', 0, 0))
 const publishing = ref(false)
 
 async function publish() {
   const organizerId = props.team.myMemberId
   if (!organizerId) return
-  publishing.value = true
-  // 细节 A：发布说明（Release Note），非必填，最多 200 字，随快照落库
-  const note = window.prompt('发布说明（可选，最多 200 字，会写入快照并展示给成员）', '')
+  // 细节 A：发布说明（Release Note），非必填，最多 500 字，随快照落库
+  const note = window.prompt('发布说明（可选，最多 500 字，会写入快照并展示给成员）', '')
   if (note === null) return // 用户取消
-  const releaseNote = note.trim().slice(0, 200)
+  const releaseNote = note.trim().slice(0, 500)
+  const previewForPublish = buildPublicSnapshot(props.team, 'preview', 0, 0, releaseNote)
+  publishing.value = true
   try {
     const res = await publishSnapshot({
       teamId: props.team.teamId,
       organizerMemberId: organizerId,
-      operationId: `publish-${props.team.draftRevision}-${Date.now().toString(36)}`,
+      operationId: `publish-${props.team.teamId}-${props.team.draftRevision}-${previewForPublish.digest}`,
       expectedDraftRevision: props.team.draftRevision,
       // 把用户看到的预览摘要带给主机：预览之后若有人确认/退回报告或审批加入，
       // 实际快照会与预览不一致，发布被拒绝并要求重看（SPEC 4.2）。
-      expectedPreviewDigest: preview.value.digest,
+      expectedPreviewDigest: previewForPublish.digest,
       releaseNote,
     })
     if (!res.ok) {

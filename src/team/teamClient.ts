@@ -28,6 +28,7 @@ import { makeEnvelope, type TeamEnvelope, type TeamActionName, type TeamResponse
 import { getTeamLink, putTeamLink } from '../db/teamActions'
 import type { TeamLink } from '../db/teamSchema'
 import type { PublicSnapshot } from './schema'
+import { digestOf } from './domain'
 
 export interface MemberSession {
   ticket: HostSessionTicket
@@ -89,13 +90,10 @@ async function postEnvelope(
   timeoutMs: number,
 ): Promise<TeamResponse> {
   const { ticket, keys, sessionKey } = session
-  // AAD 绑定动作类型与操作号（SPEC 6.3）：接收方解密时会用同一组期望值，
-  // 载荷里的类型若与 AAD 不一致则 GCM 认证失败，防跨动作重放。
-  const aad = buildAad(ticket.sessionId, 'POST', '/action', {
-    type: envelope.type,
-    operationId: envelope.operationId,
-  })
-  const body = await sealWithAad(sessionKey, utf8Bytes(JSON.stringify(envelope)), aad)
+  // 请求必须先解密才知道 type/operationId，因此请求体只绑定会话/方法/路径；
+  // 解出信封后再用完整 AAD 校验/解密响应。主机侧必须使用同一组 AAD。
+  const requestAad = buildAad(ticket.sessionId, 'POST', '/action')
+  const body = await sealWithAad(sessionKey, utf8Bytes(JSON.stringify(envelope)), requestAad)
   const url = `http://${ticket.ip}:${ticket.port}/action?c=${encodeURIComponent(keys.publicKeyB64u)}`
 
   const resp = await fetch(url, {
@@ -111,7 +109,11 @@ async function postEnvelope(
   // 响应是 base64 文本，解出密文再解密
   const b64 = (await resp.text()).trim()
   const sealed = base64ToBytes(b64)
-  const plain = await openWithAad(sessionKey, sealed, aad)
+  const responseAad = buildAad(ticket.sessionId, 'POST', '/action', {
+    type: envelope.type,
+    operationId: envelope.operationId,
+  })
+  const plain = await openWithAad(sessionKey, sealed, responseAad)
   return JSON.parse(new TextDecoder().decode(plain)) as TeamResponse
 }
 
@@ -268,11 +270,11 @@ function opId(prefix: string): string {
   opSeq++
   return `${prefix}-${Date.now().toString(36)}-${opSeq}`
 }
-// ---------- 组织者远程操作（手机主机放家里，人在其他设备上汇总） ----------
+// ---------- 组织者当面操作（同一现场扫码接入后确认/审批/发布） ----------
 //
-// 组织者用自己的成员凭证接入任意一台主机（不一定是自己的手机），
-// 主机侧 dispatchAction 对 organizer.* 动作校验 role=organizer 后
-// 代为执行本地事务。所有授权都走既有凭证链路，无新增密码学面。
+// 组织者用自己的成员凭证接入同一现场的主机，主机侧 dispatchAction 对
+// organizer.* 动作校验 role=organizer 后执行本地事务。不提供远程改分工、
+// 家里无人值守主机或外网远程控制；所有授权仍走既有凭证链路。
 
 /** 确认/退回一条报告 */
 export async function organizerDecide(
@@ -286,7 +288,7 @@ export async function organizerDecide(
     session,
     'organizer.decision',
     { auth: authOf(session), submissionId, revision, decision, note },
-    `remote-confirm-${submissionId}-${revision}`,
+    `organizer-confirm-${submissionId}-${revision}`,
   )
   return res.ok ? { ok: true, replay: res.replay } : { ok: false, error: res.error }
 }
@@ -307,7 +309,7 @@ export async function organizerApprove(
       decision,
       restoreMemberId,
     },
-    `remote-approve-${joinRequestId}`,
+    `organizer-approve-${joinRequestId}`,
   )
   return res.ok ? { ok: true } : { ok: false, error: res.error }
 }
@@ -323,7 +325,11 @@ export async function organizerPublish(
   expectedPreviewDigest?: string,
   releaseNote?: string,
 ): Promise<{ ok: boolean; version?: number; error?: string }> {
-  const trimmed = releaseNote && releaseNote.trim() ? releaseNote.trim().slice(0, 200) : undefined
+  const trimmed = releaseNote && releaseNote.trim() ? releaseNote.trim().slice(0, 500) : undefined
+  const operationId = `organizer-publish-${session.ticket.teamId}-${expectedDraftRevision}-${digestOf({
+    expectedPreviewDigest: expectedPreviewDigest ?? '',
+    releaseNote: trimmed ?? '',
+  })}`
   const res = await sendAction(
     session,
     'organizer.publish',
@@ -333,7 +339,7 @@ export async function organizerPublish(
       expectedPreviewDigest,
       releaseNote: trimmed,
     },
-    `remote-publish-${Date.now().toString(36)}`,
+    operationId,
   )
   if (!res.ok) return { ok: false, error: res.error }
   return { ok: true, version: (res.result as { version: number }).version }
@@ -348,7 +354,7 @@ export async function withdrawMyReport(
     session,
     'submission.withdraw',
     { auth: authOf(session), submissionId, revision },
-    `withdraw-${submissionId}-`,
+    `withdraw-${submissionId}-${revision}`,
   )
   return res.ok ? { ok: true, replay: res.replay } : { ok: false, error: res.error }
 }

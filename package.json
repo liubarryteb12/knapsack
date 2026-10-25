@@ -1,16 +1,22 @@
 {
   "name": "knapsack",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.1.2",
+  "license": "MIT",
   "type": "module",
-  "description": "离线优先的个人旅行规划应用",
+  "description": "本地优先的模块化个人生活系统",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/liubarryteb12/knapsack.git"
+  },
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "audit:boundary": "tsx scripts/audit-release-boundaries.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import type { Component } from 'vue'
 import {
   Sun, CloudSun, Cloud, CloudFog, CloudDrizzle, CloudRain, CloudSnow, CloudLightning,
@@ -11,20 +11,24 @@ import { fetchWeather, type DayWeather } from '../utils/weather'
 const props = defineProps<{ trip: Trip }>()
 
 const weather = ref<Map<string, DayWeather> | null>(null)
+const loading = ref(false)
 
 // 组件可能被快速切换（key 绑定 trip.id 时会整体重建，但编辑行程日期等
 // 场景会原地复用）：慢网络下旧请求晚返回会覆盖新数据。用自增序号
 // 只认最后一次发起的结果。
 let seq = 0
 
-onMounted(async () => {
+async function loadWeather() {
   const mySeq = ++seq
+  loading.value = true
   const dates = props.trip.days.map((d) => d.date)
-  const result = await fetchWeather(props.trip.destCity, dates)
+  const result = await fetchWeather(props.trip.destCity, dates).finally(() => {
+    if (mySeq === seq) loading.value = false
+  })
   if (mySeq !== seq) return
   weather.value = result
   // 失败/离线时 weather 为 null，整个区域 v-if 隐藏，不弹错
-})
+}
 
 /** WMO 代码 → Lucide 图标；与 weather.ts 的 desc 分档保持一致 */
 function iconOf(code: number): Component {
@@ -59,6 +63,12 @@ const cells = computed(() =>
       </div>
     </div>
   </div>
+  <div v-else-if="trip.destCity" class="weather-action">
+    <button type="button" class="weather-load" :disabled="loading" @click="loadWeather">
+      {{ loading ? '正在查询天气…' : '查看目的地天气' }}
+    </button>
+    <span>仅在点击后联网查询，不会后台请求</span>
+  </div>
 </template>
 
 <style scoped>
@@ -67,6 +77,30 @@ const cells = computed(() =>
   gap: var(--space-2);
   margin-bottom: var(--space-3);
   overflow-x: auto;
+}
+
+.weather-action {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  color: var(--app-muted-soft);
+  font-size: var(--text-xs);
+}
+
+.weather-load {
+  padding: 5px 9px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--radius-sm);
+  background: var(--app-card-bg);
+  color: var(--app-text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.weather-load:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .weather-cell {

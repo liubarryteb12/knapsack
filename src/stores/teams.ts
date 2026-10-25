@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import {
   createTeam as createTeamDb,
+  deleteTeam,
   listTeamSummaries,
   getTeam,
   saveTeam,
@@ -70,6 +71,16 @@ export const useTeamsStore = defineStore('teams', {
         else this.teams.push(t)
       }
       return t
+    },
+
+    async remove(teamId: string): Promise<void> {
+      await deleteTeam(teamId)
+      this.teams = this.teams.filter((team) => team.teamId !== teamId)
+      this.teamList = this.teamList.filter((team) => team.teamId !== teamId)
+      const { [teamId]: _removedLink, ...links } = this.links
+      this.links = links
+      const { [teamId]: _removedOutbox, ...outbox } = this.outbox
+      this.outbox = outbox
     },
 
     async persist(state: TeamState): Promise<TeamState> {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue'
-import { NInput } from 'naive-ui'
+import { NButton, NInput, NPopconfirm } from 'naive-ui'
+import { Trash2 } from '@lucide/vue'
 import type { Trip } from '../schema/trip'
 import { useTripsStore } from '../stores/trips'
 
@@ -10,6 +11,7 @@ const tripsStore = useTripsStore()
 const draft = ref(props.trip.notes)
 const savedText = ref('')
 const showSaved = ref(false)
+const clearing = ref(false)
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 let savedTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -56,15 +58,47 @@ onBeforeUnmount(() => {
   }
   if (savedTimer) clearTimeout(savedTimer)
 })
+
+async function clearNotes() {
+  clearing.value = true
+  try {
+    props.trip.notes = ''
+    await tripsStore.saveTrip(props.trip)
+    draft.value = ''
+    savedText.value = '备忘已清空'
+    showSaved.value = true
+    if (savedTimer) clearTimeout(savedTimer)
+    savedTimer = setTimeout(() => (showSaved.value = false), 2000)
+  } finally {
+    clearing.value = false
+  }
+}
 </script>
 
 <template>
   <div class="notes">
     <div class="notes-header">
       <span class="muted small">自由备忘，停止输入 1 秒后自动保存</span>
-      <transition name="fade">
-        <span v-if="showSaved" class="saved-tip">{{ savedText }}</span>
-      </transition>
+      <div class="notes-actions">
+        <transition name="fade">
+          <span v-if="showSaved" class="saved-tip">{{ savedText }}</span>
+        </transition>
+        <n-popconfirm @positive-click="clearNotes">
+          <template #trigger>
+            <n-button
+              quaternary
+              circle
+              size="small"
+              type="error"
+              :disabled="clearing"
+              aria-label="清空备忘录"
+            >
+              <template #icon><Trash2 :size="15" /></template>
+            </n-button>
+          </template>
+          确定清空全部备忘录？此操作不可恢复。
+        </n-popconfirm>
+      </div>
     </div>
     <n-input
       v-model:value="draft"
@@ -90,6 +124,12 @@ onBeforeUnmount(() => {
 .saved-tip {
   color: var(--app-success);
   font-size: 12px;
+}
+
+.notes-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .muted {

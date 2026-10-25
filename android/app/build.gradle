@@ -7,8 +7,8 @@ android {
         applicationId "com.liubarryteb12.knapsack"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode 4
+        versionName "1.1.2"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -34,6 +34,9 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
             if (project.hasProperty('KNAPSACK_KEYSTORE')) {
                 signingConfig signingConfigs.release
+            } else {
+                // 内部试用没有正式 keystore 时使用 Android debug key；商店发布必须替换。
+                signingConfig signingConfigs.debug
             }
         }
     }

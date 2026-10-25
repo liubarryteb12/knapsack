@@ -17,6 +17,7 @@ import {
   verifyCredential,
   buildHostTicket,
   parseHostTicket,
+  bytesToBase64,
   toB64u,
   utf8,
 } from '../src/team/identity'
@@ -99,6 +100,91 @@ async function testAad() {
 
   // 截断
   await expectThrow('截断报文拒绝', () => openWithAad(key, sealed.subarray(0, 10), aad))
+
+  // 协议信封：请求使用基础 AAD，响应使用绑定 type/operationId 的完整 AAD。
+  const responseAad = buildAad('s', 'POST', '/action', {
+    type: 'submission.submit',
+    operationId: 'op-1',
+  })
+  const responseSealed = await sealWithAad(key, utf8('response'), responseAad)
+  check(
+    '请求基础 AAD 与响应完整 AAD 可独立往返',
+    new TextDecoder().decode(await openWithAad(key, responseSealed, responseAad)) === 'response',
+  )
+  await expectThrow('响应完整 AAD 不能用于解请求体', () =>
+    openWithAad(key, sealed, responseAad),
+  )
+}
+
+async function testSendActionWire() {
+  console.log('客户端真实报文 AAD')
+  const { sendAction } = await import('../src/team/teamClient')
+  const host = await generateEcdhKeyPair()
+  const client = await generateEcdhKeyPair()
+  const sessionId = 'wire-session'
+  const ticket = parseHostTicket(
+    buildHostTicket({
+      ip: '192.168.1.8',
+      port: 41234,
+      sessionId,
+      teamId: 'team-wire',
+      hostPub: host.publicKeyB64u,
+      teamName: '报文测试团',
+    }),
+  )
+  const clientPub = await importEcdhPublicKey(client.publicKeyB64u)
+  const hostPub = await importEcdhPublicKey(host.publicKeyB64u)
+  const clientKey = await deriveSessionKey(client.privateKey, hostPub, sessionId, 'host<-client')
+  const hostKey = await deriveSessionKey(host.privateKey, clientPub, sessionId, 'host<-client')
+  const session = {
+    ticket,
+    keys: client,
+    sessionKey: clientKey,
+    link: {
+      teamId: 'team-wire',
+      memberId: 'm1',
+      memberName: '测试成员',
+      joinRequestId: 'jr-wire',
+      deviceId: 'dev-wire',
+      credential: 'credential-wire',
+      localTripId: null,
+      joinedAt: 1,
+    },
+  }
+
+  const originalFetch = globalThis.fetch
+  let requestAadOk = false
+  globalThis.fetch = async (_input, init) => {
+    const body = init?.body
+    if (!(body instanceof Uint8Array)) throw new Error('请求体不是二进制')
+    const plain = await openWithAad(
+      hostKey,
+      body,
+      buildAad(sessionId, 'POST', '/action'),
+    )
+    const envelope = JSON.parse(new TextDecoder().decode(plain)) as {
+      type: 'submission.submit'
+      operationId: string
+    }
+    requestAadOk = envelope.type === 'submission.submit' && envelope.operationId === 'op-wire'
+    const response = await sealWithAad(
+      hostKey,
+      utf8(JSON.stringify({ ok: true, result: { version: 7 } })),
+      buildAad(sessionId, 'POST', '/action', {
+        type: envelope.type,
+        operationId: envelope.operationId,
+      }),
+    )
+    return new Response(bytesToBase64(response), { status: 200 })
+  }
+
+  try {
+    const res = await sendAction(session, 'submission.submit', { note: 'wire' }, 'op-wire')
+    check('请求基础 AAD 与真实 postEnvelope 一致', requestAadOk)
+    check('响应完整 AAD 可被客户端解密', res.ok && (res.result as { version: number }).version === 7)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 }
 
 // ---------- 逐成员凭证（A15/A20） ----------
@@ -262,6 +348,7 @@ async function testJoinFlow() {
 async function main() {
   await testEcdh()
   await testAad()
+  await testSendActionWire()
   await testCredential()
   await testTicket()
   await testJoinFlow()

@@ -2,10 +2,11 @@
 import { computed, onMounted, ref } from 'vue'
 import { NSwitch, NInput, NButton, NCard, NForm, NFormItem, NSelect, NRadioGroup, NRadioButton, useMessage } from 'naive-ui'
 import { useTripsStore } from '../stores/trips'
-import type { Trip } from '../schema/trip'
 import { loadAiConfigWithKey, saveAiConfig, testAiConnection, fetchModelList, type AiConfig } from '../utils/aiConfig'
 import { useThemeStore, type ThemeMode } from '../stores/theme'
 import UiPageHeader from '../components/ui/UiPageHeader.vue'
+import { MOD_MANIFESTS, modState, setModEnabled } from '../core/modRegistry'
+import { usePagedList } from '../composables/usePagedList'
 
 const tripsStore = useTripsStore()
 const themeStore = useThemeStore()
@@ -15,17 +16,12 @@ function setTheme(value: ThemeMode) {
 }
 
 onMounted(() => {
-  tripsStore.load()
+  tripsStore.loadSummaries()
 })
 
 // ---- 模块开关：按旅行逐个配置 ----
-async function toggleModule(trip: Trip, key: 'expenses' | 'notes', value: boolean) {
-  trip.enabledModules[key] = value
-  try {
-    await tripsStore.saveTrip(trip)
-  } catch {
-    // 写库失败要把开关翻回去，否则界面显示与持久化状态不一致
-    trip.enabledModules[key] = !value
+async function toggleModule(tripId: string, key: 'expenses' | 'notes', value: boolean) {
+  if (!(await tripsStore.setTripModule(tripId, key, value))) {
     message.error('保存失败，开关已还原')
   }
 }
@@ -50,10 +46,10 @@ const BUILTIN_MODELS = [
 const modelOptions = ref(BUILTIN_MODELS.map((m) => ({ label: m, value: m })))
 const fetchingModels = ref(false)
 
-/** 拉取 /models 并入候选列表。auto 模式（打开设置页时）失败静默，不打扰用户 */
-async function fetchModels(auto = false) {
+/** 只有用户点击后才访问外部 /models，不在打开设置页时后台联网。 */
+async function fetchModels() {
   if (!ai.value.baseURL || !ai.value.apiKey) {
-    if (!auto) message.warning('请先填写 Base URL 与 API Key')
+    message.warning('请先填写 Base URL 与 API Key')
     return
   }
   persistAi()
@@ -61,7 +57,7 @@ async function fetchModels(auto = false) {
   const result = await fetchModelList(ai.value)
   fetchingModels.value = false
   if (!result.ok) {
-    if (!auto) message.error(`获取模型列表失败：${result.message}`)
+    message.error(`获取模型列表失败：${result.message}`)
     return
   }
   const merged = [...modelOptions.value]
@@ -73,13 +69,11 @@ async function fetchModels(auto = false) {
     }
   }
   modelOptions.value = merged
-  if (!auto) message.success(result.message)
+  message.success(result.message)
 }
 
 onMounted(async () => {
   ai.value = await loadAiConfigWithKey()
-  // 配置齐全就自动拉一次，省得手点；失败静默，仍可用「获取列表」重试
-  if (ai.value.baseURL && ai.value.apiKey) void fetchModels(true)
 })
 
 function persistAi() {
@@ -96,7 +90,14 @@ async function runTest() {
   testOk.value = result.ok
 }
 
-const hasTrips = computed(() => tripsStore.trips.length > 0)
+const hasTrips = computed(() => tripsStore.summaries.length > 0)
+const {
+  page,
+  pageCount,
+  pageItems: tripPage,
+  previous,
+  next,
+} = usePagedList(computed(() => tripsStore.summaries), 20)
 </script>
 
 <template>
@@ -113,18 +114,34 @@ const hasTrips = computed(() => tripsStore.trips.length > 0)
       </div>
     </n-card>
 
+    <n-card size="small" class="section" title="模块">
+      <p class="muted small">关闭模块只隐藏入口，不会删除本机数据。</p>
+      <div v-for="mod in MOD_MANIFESTS" :key="mod.id" class="mod-row">
+        <div class="mod-copy">
+          <strong>{{ mod.name }}</strong>
+          <span class="muted small">{{ mod.description }}</span>
+        </div>
+        <n-switch :value="modState[mod.id]" size="small" @update:value="(v: boolean) => setModEnabled(mod.id, v)" />
+      </div>
+    </n-card>
+
     <n-card size="small" class="section" title="模块开关（按旅行）">
       <p v-if="!hasTrips" class="muted small">还没有旅行计划。开关在各旅行的设置里控制预算/备忘模块的显隐。</p>
-      <div v-for="trip in tripsStore.trips" :key="trip.id" class="module-row">
+      <div v-for="trip in tripPage" :key="trip.id" class="module-row">
         <strong class="trip-name">{{ trip.name }}</strong>
         <label class="switch-label">
           预算
-          <n-switch :value="trip.enabledModules.expenses" size="small" @update:value="(v: boolean) => toggleModule(trip, 'expenses', v)" />
+          <n-switch :value="trip.enabledModules.expenses" size="small" @update:value="(v: boolean) => toggleModule(trip.id, 'expenses', v)" />
         </label>
         <label class="switch-label">
           备忘
-          <n-switch :value="trip.enabledModules.notes" size="small" @update:value="(v: boolean) => toggleModule(trip, 'notes', v)" />
+          <n-switch :value="trip.enabledModules.notes" size="small" @update:value="(v: boolean) => toggleModule(trip.id, 'notes', v)" />
         </label>
+      </div>
+      <div v-if="pageCount > 1" class="pagination">
+        <n-button size="small" :disabled="page <= 1" @click="previous">上一页</n-button>
+        <span class="muted small">第 {{ page }} / {{ pageCount }} 页</span>
+        <n-button size="small" :disabled="page >= pageCount" @click="next">下一页</n-button>
       </div>
     </n-card>
 
@@ -161,7 +178,7 @@ const hasTrips = computed(() => tripsStore.trips.length > 0)
               placeholder="选择或直接输入模型名"
               @update:value="persistAi"
             />
-            <n-button size="small" :loading="fetchingModels" @click="fetchModels(false)">获取列表</n-button>
+            <n-button size="small" :loading="fetchingModels" @click="fetchModels">获取列表</n-button>
           </div>
         </n-form-item>
       </n-form>
@@ -173,7 +190,7 @@ const hasTrips = computed(() => tripsStore.trips.length > 0)
 
     <n-card size="small" class="section" title="关于">
       <p class="muted small">
-        行囊 Knapsack · 离线优先的旅行规划应用。数据 100% 存本地，无账号、无服务器、无遥测。
+        行囊 Knapsack · 本地优先的模块化个人生活系统。数据 100% 存本地，无账号、无服务器、无遥测。
       </p>
     </n-card>
   </div>
@@ -208,12 +225,44 @@ const hasTrips = computed(() => tripsStore.trips.length > 0)
   padding: 6px 0;
 }
 
+.mod-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.mod-row:last-child {
+  border-bottom: 0;
+}
+
+.mod-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mod-copy .small {
+  margin-bottom: 0;
+}
+
 .trip-name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
 }
 
 .switch-label {

@@ -1,28 +1,30 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref, computed } from 'vue'
+import { onMounted, ref, computed, defineAsyncComponent, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton, NModal, NForm, NFormItem, NInput, NSelect, NPopconfirm, NDatePicker, useMessage } from 'naive-ui'
 import { Sparkles, Download, Copy, Trash2, MapPin, Plus, FolderInput } from '@lucide/vue'
 import { useTripsStore } from '../stores/trips'
 import { exportTripFile, readTripFileInput, readTripFile, TripImportError } from '../utils/tripFile'
-import { checkAiReachable } from '../utils/aiConfig'
 import { fenToYuan, yuanToFen } from '../utils/money'
 import { todayStr, addDays, daysBetween, fromDateStr, toDateStr } from '../utils/date'
 import type { DestType, Trip } from '../schema/trip'
-import AiDraftModal from '../components/AiDraftModal.vue'
 import UiPageHeader from '../components/ui/UiPageHeader.vue'
 import UiEmptyState from '../components/ui/UiEmptyState.vue'
 import UiStatusBadge from '../components/ui/UiStatusBadge.vue'
 import UiStatCard from '../components/ui/UiStatCard.vue'
 import { destTypeIcon } from '../components/icons'
 import { CalendarDays, Wallet, Compass } from '@lucide/vue'
+import { usePagedList } from '../composables/usePagedList'
+import type { TripSummary } from '../core/tripSummary'
+
+const AiDraftModal = defineAsyncComponent(() => import('../components/AiDraftModal.vue'))
 
 const router = useRouter()
 const tripsStore = useTripsStore()
 const message = useMessage()
 
 onMounted(() => {
-  tripsStore.load()
+  tripsStore.loadSummaries()
 })
 
 const destTypeOptions = [
@@ -110,7 +112,7 @@ async function onFilePicked(e: Event) {
 
 async function importAsOverwrite() {
   if (!pendingImport.value) return
-  const exists = tripsStore.trips.some((t) => t.id === pendingImport.value!.id)
+  const exists = tripsStore.summaries.some((t) => t.id === pendingImport.value!.id)
   if (!exists) {
     message.warning('本地没有同 ID 旅行，将作为新旅行保存')
   }
@@ -137,46 +139,24 @@ async function copyTrip(id: string) {
   if (copy) message.success(`已复制为「${copy.name}」`)
 }
 
-function doExport(trip: Trip) {
-  exportTripFile(trip)
+async function doExport(trip: TripSummary) {
+  const full = await tripsStore.getTrip(trip.id)
+  if (full) exportTripFile(full)
 }
 
 // ---- 展示辅助 ----
-function daysOf(trip: Trip): number {
+function daysOf(trip: TripSummary): number {
   return daysBetween(trip.startDate, trip.endDate)
 }
 
-/**
- * 已用金额与预算占比按 trip 引用缓存。
- *
- * 模板里这两项每个卡片要读 3–4 次，而每次都是对整个 expenses 数组的 reduce。
- * 长列表（压测到 200 个旅行）下，一次重渲染就是几百次重复遍历。
- * 这里用 WeakMap 按对象引用缓存：同一份 trip 数据没被替换过就不重算，
- * 编辑/覆盖会换出新对象，缓存自然失效，不需要手动清理。
- */
-const usedFenCache = new WeakMap<Trip, { used: number; pct: number }>()
-
-function usedFen(trip: Trip): number {
-  return statsOf(trip).used
-}
-
-function budgetPct(trip: Trip): number {
-  return statsOf(trip).pct
-}
-
-function statsOf(trip: Trip): { used: number; pct: number } {
-  const hit = usedFenCache.get(trip)
-  if (hit) return hit
-  const used = trip.expenses.reduce((a, e) => a + e.amountFen, 0)
-  const pct =
-    trip.totalBudgetFen <= 0 ? 0 : Math.min(100, Math.round((used / trip.totalBudgetFen) * 100))
-  const stats = { used, pct }
-  usedFenCache.set(trip, stats)
-  return stats
+function budgetPct(trip: TripSummary): number {
+  return trip.totalBudgetFen <= 0
+    ? 0
+    : Math.min(100, Math.round((trip.usedFen / trip.totalBudgetFen) * 100))
 }
 
 /** 人性化日期：同年省略年份，如「10月2日 – 4日」 */
-function humanDate(trip: Trip): string {
+function humanDate(trip: TripSummary): string {
   const [sy, sm, sd] = trip.startDate.split('-')
   const [, em, ed] = trip.endDate.split('-')
   const year = new Date().getFullYear().toString()
@@ -187,56 +167,37 @@ function humanDate(trip: Trip): string {
 }
 
 // ---- 统计行 ----
-const isEmpty = computed(() => tripsStore.loaded && tripsStore.trips.length === 0)
-const totalCount = computed(() => tripsStore.trips.length)
+const isEmpty = computed(() => tripsStore.loaded && tripsStore.summaries.length === 0)
+const totalCount = computed(() => tripsStore.summaries.length)
 const ongoingCount = computed(() => {
   const today = todayStr()
-  return tripsStore.trips.filter((t) => t.startDate <= today && t.endDate >= today).length
+  return tripsStore.summaries.filter((t) => t.startDate <= today && t.endDate >= today).length
 })
 const totalSpentYuan = computed(() =>
-  fenToYuan(tripsStore.trips.reduce((a, t) => a + t.expenses.reduce((x, e) => x + e.amountFen, 0), 0)),
+  fenToYuan(tripsStore.summaries.reduce((sum, trip) => sum + trip.usedFen, 0)),
 )
+
+const search = ref('')
+const filteredTrips = computed(() => {
+  const query = search.value.trim().toLocaleLowerCase()
+  if (!query) return tripsStore.summaries
+  return tripsStore.summaries.filter((trip) =>
+    `${trip.name} ${trip.destCity}`.toLocaleLowerCase().includes(query),
+  )
+})
+const { page, pageCount, pageItems, previous, next } = usePagedList(filteredTrips, 24)
+watch(search, () => {
+  page.value = 1
+})
 
 // ---- AI 草稿入口 ----
 const showAi = ref(false)
-// 不能用 navigator.onLine：安卓 WebView 在无默认网络时仍返回 true，改用真实探活
-const aiOnline = ref(false)
-let aiRetryTimer: ReturnType<typeof setTimeout> | null = null
-
-async function probeAi() {
-  const reachable = await checkAiReachable()
-  aiOnline.value = reachable
-  if (aiRetryTimer) {
-    clearTimeout(aiRetryTimer)
-    aiRetryTimer = null
-  }
-  // 探活失败就定时重试：安卓 WebView 的 online 事件不一定触发，
-  // 网络恢复后得自己再探一次，否则按钮会一直停在置灰状态
-  if (!reachable) {
-    aiRetryTimer = setTimeout(probeAi, 10000)
-  }
-}
-
-onMounted(() => {
-  probeAi()
-  window.addEventListener('online', probeAi)
-  window.addEventListener('offline', probeAi)
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener('online', probeAi)
-  window.removeEventListener('offline', probeAi)
-  if (aiRetryTimer) {
-    clearTimeout(aiRetryTimer)
-    aiRetryTimer = null
-  }
-})
 </script>
 
 <template>
   <div class="page">
     <UiPageHeader title="我的旅行">
-      <n-button :disabled="!aiOnline" @click="showAi = true" :title="aiOnline ? '' : '断网时 AI 功能不可用'">
+      <n-button @click="showAi = true" title="生成前会检查网络与接口可达性">
         <template #icon><Sparkles :size="15" /></template>
         AI 行程草稿
       </n-button>
@@ -273,8 +234,19 @@ onBeforeUnmount(() => {
         <UiStatCard :icon="Wallet" label="累计花费" :value="`¥${totalSpentYuan}`" />
       </div>
 
+      <div class="list-toolbar">
+        <input
+          v-model="search"
+          class="trip-search"
+          type="search"
+          placeholder="搜索旅行名称或城市"
+          aria-label="搜索旅行"
+        />
+        <span class="muted list-count">显示 {{ filteredTrips.length }} / {{ totalCount }} 个</span>
+      </div>
+
       <div class="trip-grid">
-        <n-card v-for="trip in tripsStore.trips" :key="trip.id" class="trip-card" hoverable>
+        <n-card v-for="trip in pageItems" :key="trip.id" class="trip-card" hoverable>
           <div class="trip-card-head" @click="router.push(`/trip/${trip.id}`)">
             <span class="dest-icon" :data-type="trip.destType">
               <component :is="destTypeIcon[trip.destType]" :size="17" :stroke-width="2" />
@@ -285,7 +257,7 @@ onBeforeUnmount(() => {
           <div class="trip-meta">
             <div class="meta-line">{{ humanDate(trip) }} · {{ daysOf(trip) }} 天<span v-if="trip.destCity" class="meta-city"><MapPin :size="12" :stroke-width="2" />{{ trip.destCity }}</span></div>
             <div v-if="trip.totalBudgetFen > 0" class="budget-line tnum">
-              <span>¥{{ fenToYuan(usedFen(trip)) }}</span>
+              <span>¥{{ fenToYuan(trip.usedFen) }}</span>
               <span class="muted">/ ¥{{ fenToYuan(trip.totalBudgetFen) }}</span>
               <span class="budget-pct" :class="{ over: budgetPct(trip) >= 100 }">{{ budgetPct(trip) }}%</span>
             </div>
@@ -293,29 +265,33 @@ onBeforeUnmount(() => {
               <div class="budget-bar-inner" :class="{ over: budgetPct(trip) >= 100 }" :style="{ width: budgetPct(trip) + '%' }" />
             </div>
           </div>
-          <template #action>
-            <div class="card-actions">
-              <n-button size="small" quaternary @click="router.push(`/trip/${trip.id}`)">打开</n-button>
-              <n-button size="small" quaternary @click="doExport(trip)">
-                <template #icon><Download :size="14" /></template>
-                导出
-              </n-button>
-              <n-button size="small" quaternary @click="copyTrip(trip.id)">
-                <template #icon><Copy :size="14" /></template>
-                复制
-              </n-button>
-              <n-popconfirm @positive-click="removeTrip(trip.id)">
-                <template #trigger>
-                  <n-button size="small" quaternary type="error">
-                    <template #icon><Trash2 :size="14" /></template>
-                    删除
-                  </n-button>
-                </template>
-                确定删除「{{ trip.name }}」？此操作不可恢复。
-              </n-popconfirm>
-            </div>
-          </template>
+          <div class="card-actions card-actions-inline">
+            <n-button size="small" quaternary @click="router.push(`/trip/${trip.id}`)">打开</n-button>
+            <n-button size="small" quaternary @click="doExport(trip)">
+              <template #icon><Download :size="14" /></template>
+              导出
+            </n-button>
+            <n-button size="small" quaternary @click="copyTrip(trip.id)">
+              <template #icon><Copy :size="14" /></template>
+              复制
+            </n-button>
+            <n-popconfirm @positive-click="removeTrip(trip.id)">
+              <template #trigger>
+                <n-button size="small" quaternary type="error">
+                  <template #icon><Trash2 :size="14" /></template>
+                  删除
+                </n-button>
+              </template>
+              确定删除「{{ trip.name }}」？此操作不可恢复。
+            </n-popconfirm>
+          </div>
         </n-card>
+      </div>
+      <div v-if="filteredTrips.length === 0" class="empty-search">没有匹配的旅行。</div>
+      <div v-if="pageCount > 1" class="pagination">
+        <n-button size="small" :disabled="page <= 1" @click="previous">上一页</n-button>
+        <span class="muted">第 {{ page }} / {{ pageCount }} 页</span>
+        <n-button size="small" :disabled="page >= pageCount" @click="next">下一页</n-button>
       </div>
     </template>
 
@@ -375,7 +351,7 @@ onBeforeUnmount(() => {
       </template>
     </n-modal>
     <!-- AI 行程草稿 -->
-    <AiDraftModal v-model:show="showAi" />
+    <AiDraftModal v-if="showAi" v-model:show="showAi" />
   </div>
 </template>
 
@@ -391,6 +367,42 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: var(--space-4);
+}
+
+.list-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.trip-search {
+  width: min(320px, 100%);
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--radius-md);
+  background: var(--app-card-bg);
+  color: var(--app-text);
+  font: inherit;
+}
+
+.list-count {
+  font-size: var(--text-xs);
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+.empty-search {
+  padding: var(--space-6) 0;
+  color: var(--app-muted-soft);
+  text-align: center;
 }
 
 .trip-card {
@@ -513,6 +525,12 @@ onBeforeUnmount(() => {
   display: flex;
   gap: var(--space-1);
   justify-content: flex-end;
+}
+
+.card-actions-inline {
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--app-border);
 }
 
 .modal-footer {

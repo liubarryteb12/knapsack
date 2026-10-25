@@ -38,6 +38,7 @@ import QrScanner from '../QrScanner.vue'
 import { newId } from '../../team/protocol'
 import { yuanToFen, fenToYuan } from '../../utils/money'
 import type { TeamState, PublicSnapshot, Submission } from '../../team/schema'
+import { buildPublicSnapshot } from '../../team/domain'
 
 const props = defineProps<{ team: TeamState }>()
 const emit = defineEmits<{ (e: 'changed'): void }>()
@@ -98,9 +99,9 @@ const connectedAsOrganizer = computed(() => {
   return me.value?.role === 'organizer' && !!session.value
 })
 
-const remoteConfirming = ref<string | null>(null)
-const remoteApprovingId = ref<string | null>(null)
-const remotePublishing = ref(false)
+const orgConfirming = ref<string | null>(null)
+const orgApprovingId = ref<string | null>(null)
+const orgPublishing = ref(false)
 
 /** 待审核列表：主机本机数据（props.team）， revision>1 即「有更新」 */
 const orgPendingSubs = computed(() =>
@@ -115,7 +116,7 @@ function hasNewerRevision(s: Submission): boolean {
 
 async function orgDecide(s: Submission, decision: 'confirmed' | 'rejected') {
   if (!session.value) return
-  if (decision === 'confirmed') remoteConfirming.value = s.submissionId
+  if (decision === 'confirmed') orgConfirming.value = s.submissionId
   try {
     const note =
       decision === 'rejected' ? (window.prompt('退回原因（可留空）') ?? '') : undefined
@@ -133,13 +134,13 @@ async function orgDecide(s: Submission, decision: 'confirmed' | 'rejected') {
     message.success(res.replay ? '此前已处理过（幂等重放）' : decision === 'confirmed' ? '已确认' : '已退回')
     emit('changed')
   } finally {
-    remoteConfirming.value = null
+    orgConfirming.value = null
   }
 }
 
 async function orgDecideJoin(joinRequestId: string, decision: 'approved' | 'rejected') {
   if (!session.value) return
-  remoteApprovingId.value = joinRequestId
+  orgApprovingId.value = joinRequestId
   try {
     const res = await organizerApprove(session.value, joinRequestId, decision)
     if (!res.ok) {
@@ -149,22 +150,23 @@ async function orgDecideJoin(joinRequestId: string, decision: 'approved' | 'reje
     message.success(decision === 'approved' ? '已通过加入申请' : '已拒绝加入申请')
     emit('changed')
   } finally {
-    remoteApprovingId.value = null
+    orgApprovingId.value = null
   }
 }
 
 async function orgPublish() {
   if (!session.value) return
-  // 细节 A：发布说明（Release Note），非必填，最多 200 字
-  const note = window.prompt('发布说明（可选，最多 200 字，会写入快照并展示给成员）', '')
+  // 细节 A：发布说明（Release Note），非必填，最多 500 字
+  const note = window.prompt('发布说明（可选，最多 500 字，会写入快照并展示给成员）', '')
   if (note === null) return
-  const releaseNote = note.trim().slice(0, 200)
-  remotePublishing.value = true
+  const releaseNote = note.trim().slice(0, 500)
+  const previewForPublish = buildPublicSnapshot(props.team, 'preview', 0, 0, releaseNote)
+  orgPublishing.value = true
   try {
     const res = await organizerPublish(
       session.value,
       props.team.draftRevision,
-      undefined,
+      previewForPublish.digest,
       releaseNote || undefined,
     )
     if (!res.ok) {
@@ -174,7 +176,7 @@ async function orgPublish() {
     message.success(`已发布第 ${res.version} 版，成员可领取`)
     emit('changed')
   } finally {
-    remotePublishing.value = false
+    orgPublishing.value = false
   }
 }
 
@@ -192,7 +194,9 @@ async function claim() {
       message.warning('组织者还没有发布任何版本')
       return
     }
-    const opId = `receipt-${snap.publicationId}-${newId()}`
+    // 同一发布版本固定使用同一个操作号：回执丢失后重试命中主机幂等结果，
+    // 不会因为新随机号被当成另一条回执。
+    const opId = `receipt-${snap.publicationId}`
     const saved = await ingestPublication({
       teamId: props.team.teamId,
       memberId: props.team.myMemberId ?? '',
@@ -246,13 +250,15 @@ const stageLabel: Record<string, string> = { purchase: '采购', carry: '携带'
 // ---------- 上报 ----------
 
 const showReport = ref(false)
+const editingSubmission = ref<Submission | null>(null)
 const reportForm = ref({
   allocationId: '',
   stage: 'purchase' as 'purchase' | 'carry' | 'count',
   checkpointId: null as string | null,
   qty: 1,
   amountYuan: '' as string,
-  splitMode: 'equal' as 'equal' | 'custom',
+  splitMode: 'equal' as 'equal' | 'shares' | 'custom',
+  shares: {} as Record<string, number>,
   customAmounts: {} as Record<string, string>,
   note: '',
 })
@@ -265,9 +271,43 @@ function openReport() {
   showReport.value = true
 }
 
+/** 本机作者的最新报告版本；用于成员主动发起修订。 */
+const myReports = computed(() => {
+  const mine = props.team.submissions.filter(
+    (s) => s.authorMemberId === props.team.myMemberId && s.review !== 'withdrawn',
+  )
+  const latest = new Map<string, Submission>()
+  for (const s of mine) {
+    const prev = latest.get(s.submissionId)
+    if (!prev || s.revision > prev.revision) latest.set(s.submissionId, s)
+  }
+  return [...latest.values()].sort((a, b) => b.revision - a.revision)
+})
+
+const reviewLabel: Record<string, string> = {
+  submitted: '待确认',
+  confirmed: '已确认',
+  rejected: '已退回',
+  stale: '需重新上报',
+  withdrawn: '已撤回',
+}
+
+function reviewTagType(review: Submission['review']): 'success' | 'warning' | 'error' | 'default' {
+  if (review === 'confirmed') return 'success'
+  if (review === 'rejected') return 'error'
+  if (review === 'submitted' || review === 'stale') return 'warning'
+  return 'default'
+}
+
+function reportTitle(s: Submission): string {
+  if (!s.allocationId) return '费用'
+  return itemOf(s.allocationId)?.item.name ?? s.allocationId
+}
+
 /** 打开或提交后都走这里：默认选中第一个任务，其余字段清空。
  *  提交后不重置的话，下次打开会残留上次的批次/数量/金额，容易误重复上报。 */
 function resetReportForm(first?: { allocationId: string; stages: string[] }) {
+  editingSubmission.value = null
   reportForm.value = {
     allocationId: first?.allocationId ?? '',
     stage: (first?.stages[0] as 'purchase' | 'carry' | 'count') ?? 'purchase',
@@ -275,9 +315,35 @@ function resetReportForm(first?: { allocationId: string; stages: string[] }) {
     qty: 1,
     amountYuan: '',
     splitMode: 'equal',
+    shares: Object.fromEntries(props.team.roster.map((m) => [m.memberId, 1])),
     customAmounts: {},
     note: '',
   }
+}
+
+function openEditReport(s: Submission) {
+  editingSubmission.value = s
+  const split = s.split
+  reportForm.value = {
+    allocationId: s.allocationId ?? '',
+    stage: s.stage,
+    checkpointId: s.checkpointId,
+    qty: s.qty ?? 1,
+    amountYuan: s.amountFen !== null ? fenToYuan(s.amountFen) : '',
+    splitMode: split?.mode ?? 'equal',
+    shares:
+      split?.mode === 'shares'
+        ? Object.fromEntries(
+            split.memberIds.map((memberId, index) => [memberId, split.shares[index] ?? 1]),
+          )
+        : Object.fromEntries(props.team.roster.map((m) => [m.memberId, 1])),
+    customAmounts:
+      split?.mode === 'custom'
+        ? Object.fromEntries(Object.entries(split.amounts).map(([id, fen]) => [id, fenToYuan(fen)]))
+        : {},
+    note: s.note,
+  }
+  showReport.value = true
 }
 
 const reportAllocOptions = computed(() =>
@@ -293,8 +359,8 @@ async function submit() {
     return
   }
   const f = reportForm.value
-  if (!f.allocationId) {
-    message.error('请选择要上报的批次')
+  if (!f.allocationId && !f.amountYuan.trim()) {
+    message.error('请选择批次，或填写无批次的费用金额')
     return
   }
   if (f.stage === 'count' && !f.checkpointId) {
@@ -303,47 +369,70 @@ async function submit() {
   }
   submitting.value = true
   try {
+    const editing = editingSubmission.value
     // 金额一律走 money 工具：整数分，拒绝 NaN / 三位小数 / 非法字符
     const amountFen = f.amountYuan.trim() ? yuanToFen(f.amountYuan) : null
     if (f.amountYuan.trim() && amountFen === null) {
       message.error('金额格式不对：请填两位小数以内的数字，例如 36.00')
       return
     }
-    // 自定义分摊（SPEC 3.5 custom）：按人填元，转整数分，只保留 >0 的
-    let customSplit: { mode: 'custom'; amounts: Record<string, number> } | undefined
-    if (amountFen !== null && f.splitMode === 'custom') {
-      const amounts: Record<string, number> = {}
-      for (const m of props.team.roster) {
-        const fen = Math.round(Number(f.customAmounts[m.memberId] ?? '0') * 100)
-        if (Number.isFinite(fen) && fen > 0) amounts[m.memberId] = fen
+    // 费用分摊（SPEC 3.5）：支持均分、按份、自定义三种方式。
+    let split: NonNullable<Submission['split']> | undefined
+    if (amountFen !== null) {
+      const memberIds = props.team.roster.map((m) => m.memberId)
+      if (f.splitMode === 'custom') {
+        const amounts: Record<string, number> = {}
+        for (const m of props.team.roster) {
+          const raw = (f.customAmounts[m.memberId] ?? '').trim()
+          if (!raw) continue
+          const fen = yuanToFen(raw)
+          if (fen === null) {
+            message.error(`「${m.name}」的分摊金额格式不对，请填两位小数以内的数字`)
+            return
+          }
+          if (fen > 0) amounts[m.memberId] = fen
+        }
+        const total = Object.values(amounts).reduce((a, b) => a + b, 0)
+        if (total !== amountFen) {
+          message.error('自定义分摊合计必须等于总金额')
+          return
+        }
+        split = { mode: 'custom', amounts }
+      } else if (f.splitMode === 'shares') {
+        split = {
+          mode: 'shares',
+          memberIds,
+          shares: memberIds.map((memberId) => Math.max(1, Math.floor(f.shares[memberId] ?? 1))),
+        }
+      } else {
+        split = { mode: 'equal', memberIds }
       }
-      customSplit = { mode: 'custom', amounts }
     }
     const draft = {
-      submissionId: newId(),
-      revision: 1,
-      allocationId: f.allocationId,
-      stage: f.stage,
-      checkpointId: f.stage === 'count' ? f.checkpointId : null,
+      submissionId: editing?.submissionId ?? newId(),
+      revision: editing ? editing.revision + 1 : 1,
+      allocationId: f.allocationId || null,
+      stage: f.allocationId ? f.stage : 'purchase',
+      checkpointId: f.allocationId && f.stage === 'count' ? f.checkpointId : null,
       // 任务版本：优先用领取到的公共快照所依据的草稿版本；
       // 还没领取过快照时退回本机 teamState 的 draftRevision。
       // 不能再写死 1——那会让报告在组织者一改分工后就立刻被判 stale。
       taskRevision: snapshot.value?.sourceDraftRevision ?? props.team.draftRevision,
-      qty: f.qty,
+      qty: amountFen !== null && !f.allocationId ? null : f.qty,
       amountFen,
-      expenseReportId: amountFen !== null ? newId() : null,
-      ...(customSplit ? { split: customSplit } : {}),
-      ...(customSplit ? { split: customSplit } : {}),
-      payerMemberId: null,
+      expenseReportId: amountFen !== null ? (editing?.expenseReportId ?? newId()) : null,
+      ...(split ? { split } : {}),
+      payerMemberId: editing?.payerMemberId ?? null,
+      relatedAllocationIds: editing?.relatedAllocationIds ?? [],
     }
-    const res = await submitReport(session.value, draft, `submit-${draft.submissionId}`)
+    const res = await submitReport(session.value, draft, `submit-${draft.submissionId}-${draft.revision}`)
     if (!res.ok) {
       message.error(res.error ?? '上报失败')
       return
     }
     showReport.value = false
     resetReportForm()
-    message.success('已上报，等待组织者确认')
+    message.success(editing ? '已提交修订，等待组织者确认' : '已上报，等待组织者确认')
   } finally {
     submitting.value = false
   }
@@ -413,6 +502,10 @@ const comparisonText = computed(() => {
 async function pickPublicFile() {
   const picked = await pickTextFile('.team-public,application/json')
   if (!picked) return
+  if ('error' in picked) {
+    message.error(picked.error)
+    return
+  }
   try {
     const check = checkPublicImport(picked.text, localVersion.value)
     if (check.snapshot.teamId !== props.team.teamId) {
@@ -537,7 +630,7 @@ async function refresh() {
         分工修改请在主机本机进行；这里用于接入后当场确认报告、审批加入与发布新版本。
       </p>
 
-      <div v-if="orgPendingSubs.length > 0" class="remote-sec">
+      <div v-if="orgPendingSubs.length > 0" class="org-sec">
         <div class="sub-head"><strong>待审核报告</strong></div>
         <div v-for="s in orgPendingSubs" :key="s.submissionId" class="row sub-row">
           <div class="grow">
@@ -545,24 +638,24 @@ async function refresh() {
             <span class="muted small"> {{ s.note }}</span>
             <n-tag v-if="hasNewerRevision(s)" size="tiny" type="warning" :bordered="false">有更新</n-tag>
           </div>
-          <n-button size="small" type="primary" :loading="remoteConfirming === s.submissionId" @click="orgDecide(s, 'confirmed')">确认</n-button>
-          <n-button size="small" :loading="remoteConfirming === s.submissionId" @click="orgDecide(s, 'rejected')">退回</n-button>
+          <n-button size="small" type="primary" :loading="orgConfirming === s.submissionId" @click="orgDecide(s, 'confirmed')">确认</n-button>
+          <n-button size="small" :loading="orgConfirming === s.submissionId" @click="orgDecide(s, 'rejected')">退回</n-button>
         </div>
       </div>
 
-      <div v-if="team.pendingJoins.length > 0" class="remote-sec">
+      <div v-if="team.pendingJoins.length > 0" class="org-sec">
         <div class="sub-head"><strong>待审批加入</strong></div>
         <div v-for="j in team.pendingJoins" :key="j.joinRequestId" class="row sub-row">
           <div class="grow">
             <strong>{{ j.memberName }}</strong>
           </div>
-          <n-button size="small" type="primary" :loading="remoteApprovingId === j.joinRequestId" @click="orgDecideJoin(j.joinRequestId, 'approved')">通过</n-button>
-          <n-button size="small" :loading="remoteApprovingId === j.joinRequestId" @click="orgDecideJoin(j.joinRequestId, 'rejected')">拒绝</n-button>
+          <n-button size="small" type="primary" :loading="orgApprovingId === j.joinRequestId" @click="orgDecideJoin(j.joinRequestId, 'approved')">通过</n-button>
+          <n-button size="small" :loading="orgApprovingId === j.joinRequestId" @click="orgDecideJoin(j.joinRequestId, 'rejected')">拒绝</n-button>
         </div>
       </div>
 
       <div style="margin-top: 8px">
-        <n-button type="primary" block :loading="remotePublishing" @click="orgPublish">
+        <n-button type="primary" block :loading="orgPublishing" @click="orgPublish">
           发布第 {{ (team.latestPublication?.version ?? 0) + 1 }} 版
         </n-button>
         <p class="muted small" style="margin-top: 4px">
@@ -601,11 +694,40 @@ async function refresh() {
       </div>
     </n-card>
 
+    <!-- 成员修订入口（AIMS 细节 B）：同一 submissionId 递增 revision，旧确认保留。 -->
+    <n-card title="我的上报" size="small">
+      <p v-if="myReports.length === 0" class="muted small">还没有上报记录。</p>
+      <div v-for="s in myReports" :key="`${s.submissionId}-${s.revision}`" class="row task-row">
+        <span class="grow">
+          <strong>{{ reportTitle(s) }}</strong>
+          <span class="muted small">
+            · {{ stageLabel[s.stage] ?? s.stage }} · 第 {{ s.revision }} 版
+            <template v-if="s.amountFen !== null"> · ¥{{ fenToYuan(s.amountFen) }}</template>
+            <template v-else-if="s.qty !== null"> · 数量 {{ s.qty }}</template>
+          </span>
+        </span>
+        <n-tag size="tiny" :type="reviewTagType(s.review)" :bordered="false">
+          {{ reviewLabel[s.review] ?? s.review }}
+        </n-tag>
+        <n-button size="tiny" @click="openEditReport(s)">修改</n-button>
+      </div>
+    </n-card>
+
     <!-- 上报 -->
-    <n-modal v-model:show="showReport" preset="card" title="上报" style="width: min(480px, calc(100vw - 32px))">
+    <n-modal
+      v-model:show="showReport"
+      preset="card"
+      :title="editingSubmission ? '修改上报' : '上报'"
+      style="width: min(480px, calc(100vw - 32px))"
+    >
       <n-form label-placement="top">
         <n-form-item label="批次">
-          <n-select v-model:value="reportForm.allocationId" :options="reportAllocOptions" placeholder="选择批次" />
+          <n-select
+            v-model:value="reportForm.allocationId"
+            :options="reportAllocOptions"
+            clearable
+            placeholder="选择批次（仅费用可留空）"
+          />
         </n-form-item>
         <n-form-item label="环节">
           <n-select
@@ -629,9 +751,15 @@ async function refresh() {
         <n-form-item v-if="hasAmount" label="分摊方式">
           <n-radio-group v-model:value="reportForm.splitMode">
             <n-radio value="equal">全体均分</n-radio>
+            <n-radio value="shares">按份分摊</n-radio>
             <n-radio value="custom">自定义金额</n-radio>
           </n-radio-group>
         </n-form-item>
+        <template v-if="hasAmount && reportForm.splitMode === 'shares'">
+          <n-form-item v-for="m in props.team.roster" :key="m.memberId" :label="`${m.name}的份数`">
+            <n-input-number v-model:value="reportForm.shares[m.memberId]" :min="1" />
+          </n-form-item>
+        </template>
         <template v-if="hasAmount && reportForm.splitMode === 'custom'">
           <n-form-item v-for="m in props.team.roster" :key="m.memberId" :label="m.name">
             <n-input v-model:value="reportForm.customAmounts[m.memberId]" placeholder="0.00" />
@@ -645,7 +773,9 @@ async function refresh() {
       <template #footer>
         <div class="foot">
           <n-button @click="showReport = false">取消</n-button>
-          <n-button type="primary" :loading="submitting" @click="submit">提交</n-button>
+          <n-button type="primary" :loading="submitting" @click="submit">
+            {{ editingSubmission ? '提交修订' : '提交' }}
+          </n-button>
         </div>
       </template>
     </n-modal>

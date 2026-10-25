@@ -5,8 +5,17 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { NButton, NInput, NModal, NForm, NFormItem, NTag, useMessage } from 'naive-ui'
-import { Plus, ScanLine, Users, Crown, ClipboardList } from '@lucide/vue'
+import {
+  NButton,
+  NInput,
+  NModal,
+  NForm,
+  NFormItem,
+  NPopconfirm,
+  NTag,
+  useMessage,
+} from 'naive-ui'
+import { Plus, ScanLine, Users, Crown, ClipboardList, Trash2 } from '@lucide/vue'
 import { useTeamsStore } from '../stores/teams'
 import { joinTeam } from '../team/teamClient'
 import { parseHostTicket } from '../team/identity'
@@ -15,6 +24,7 @@ import QrScanner from '../components/QrScanner.vue'
 import UiPageHeader from '../components/ui/UiPageHeader.vue'
 import UiEmptyState from '../components/ui/UiEmptyState.vue'
 import type { TeamListItem } from '../db/teamActions'
+import { currentTeamSession, stopTeamHost } from '../team/teamHostService'
 
 const router = useRouter()
 const teams = useTeamsStore()
@@ -139,6 +149,23 @@ function myRole(t: TeamListItem): string {
 function goTeam(t: TeamListItem) {
   void router.push(`/team/${t.teamId}`)
 }
+
+const deletingTeamId = ref<string | null>(null)
+
+async function removeTeam(t: TeamListItem) {
+  if (currentTeamSession()?.teamId === t.teamId) {
+    await stopTeamHost().catch(() => {})
+  }
+  deletingTeamId.value = t.teamId
+  try {
+    await teams.remove(t.teamId)
+    message.success(`已删除「${t.name}」`)
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : String(e))
+  } finally {
+    deletingTeamId.value = null
+  }
+}
 </script>
 
 <template>
@@ -161,7 +188,8 @@ function goTeam(t: TeamListItem) {
     />
 
     <div v-else class="grid">
-      <button v-for="t in teams.teamList" :key="t.teamId" class="card" @click="goTeam(t)">
+      <div v-for="t in teams.teamList" :key="t.teamId" class="card-wrap">
+        <button class="card" @click="goTeam(t)">
         <div class="card-head">
           <span class="card-title">{{ t.name }}</span>
           <n-tag :type="myRole(t) === '组织者' ? 'warning' : 'info'" size="small" :bordered="false">
@@ -171,18 +199,35 @@ function goTeam(t: TeamListItem) {
             </template>
             {{ myRole(t) }}
           </n-tag>
-        </div>
-        <div class="card-meta">
-          <span>{{ t.roster.length }} 名成员</span>
-          <span>{{ t.items.length }} 项物资</span>
-          <span>{{ t.checkpoints.length }} 个节点</span>
-        </div>
-        <div class="card-foot">
-          <ClipboardList :size="14" />
-          <span v-if="t.latestPublication">已发布第 {{ t.latestPublication.version }} 版</span>
-          <span v-else>尚未发布</span>
-        </div>
-      </button>
+          </div>
+          <div class="card-meta">
+            <span>{{ t.roster.length }} 名成员</span>
+            <span>{{ t.items.length }} 项物资</span>
+            <span>{{ t.checkpoints.length }} 个节点</span>
+          </div>
+          <div class="card-foot">
+            <ClipboardList :size="14" />
+            <span v-if="t.latestPublication">已发布第 {{ t.latestPublication.version }} 版</span>
+            <span v-else>尚未发布</span>
+          </div>
+        </button>
+        <n-popconfirm @positive-click="removeTeam(t)">
+          <template #trigger>
+            <n-button
+              class="card-delete"
+              quaternary
+              circle
+              size="small"
+              type="error"
+              :loading="deletingTeamId === t.teamId"
+              :aria-label="`删除团队 ${t.name}`"
+            >
+              <template #icon><Trash2 :size="15" /></template>
+            </n-button>
+          </template>
+          删除「{{ t.name }}」会清掉本机的团队资料、发布记录和配对凭证，且不可恢复。确认删除？
+        </n-popconfirm>
+      </div>
     </div>
 
     <!-- 创建团队 -->
@@ -261,6 +306,10 @@ function goTeam(t: TeamListItem) {
   gap: var(--space-4);
 }
 
+.card-wrap {
+  position: relative;
+}
+
 .card {
   display: flex;
   flex-direction: column;
@@ -277,6 +326,13 @@ function goTeam(t: TeamListItem) {
 .card:hover {
   border-color: var(--app-accent);
   transform: translateY(-1px);
+}
+
+.card-delete {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
 }
 
 .card-head {

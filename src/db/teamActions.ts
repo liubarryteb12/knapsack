@@ -586,7 +586,7 @@ export interface PublishInput {
 }
 
 export type PublishResult =
-  | { ok: true; publicationId: string; version: number; created: boolean }
+  | { ok: true; publicationId: string; version: number; created: boolean; replayed?: boolean }
   | { ok: false; error: string }
 
 /**
@@ -601,6 +601,8 @@ export async function publishSnapshot(input: PublishInput): Promise<PublishResul
   const payloadDigest = digestOf({
     expectedDraftRevision: input.expectedDraftRevision,
     itinerary: input.itinerary ?? null,
+    expectedPreviewDigest: input.expectedPreviewDigest ?? '',
+    releaseNote: input.releaseNote ?? '',
   })
   const key = idempotencyKey(input.teamId, input.organizerMemberId, 'publication.publish', input.operationId)
 
@@ -611,7 +613,7 @@ export async function publishSnapshot(input: PublishInput): Promise<PublishResul
       const outcome = await inTxIdempotent<PublishResult>(key, payloadDigest)
       if (outcome.kind === 'replay') {
         // 重试返回原版，不再增版（A13）
-        return outcome.result
+        return { ...outcome.result, created: false, replayed: true }
       }
       if (outcome.kind === 'conflict') throw new Error('同 operationId 但内容不同')
 
@@ -633,7 +635,7 @@ export async function publishSnapshot(input: PublishInput): Promise<PublishResul
       // 或者 pendingJoins 被审批，实际生成的快照就不再是发布者看到的那份。
       // 比对 digest 拒绝掉，比 draftRevision 精确——后者只在分工编辑时变化。
       if (input.expectedPreviewDigest !== undefined) {
-        const probe = buildPublicSnapshot(parsed, 'preview', 0, 0)
+        const probe = buildPublicSnapshot(parsed, 'preview', 0, 0, input.releaseNote ?? '')
         if (probe.digest !== input.expectedPreviewDigest) {
           throw new Error('发布内容与预览不一致（期间有新的确认或审批），请重看预览后再发布')
         }
@@ -645,7 +647,9 @@ export async function publishSnapshot(input: PublishInput): Promise<PublishResul
 
       // buildPublicSnapshot 内部已算好 digest；itinerary 是发布时才补的字段，
       // 因此只有补了 itinerary 才需要重算一次（避免每次发布都做两次全量摘要）。
-      const snapshot = buildPublicSnapshot(parsed, publicationId, version, createdAt, input.releaseNote ?? '')
+      const snapshot = publicSnapshotSchema.parse(
+        buildPublicSnapshot(parsed, publicationId, version, createdAt, input.releaseNote ?? ''),
+      )
       if (input.itinerary) {
         snapshot.itinerary = toPlain(input.itinerary)
         snapshot.digest = digestOf({ ...snapshot, digest: '' })
@@ -1049,6 +1053,30 @@ export async function getTeam(teamId: string): Promise<TeamState | undefined> {
   return raw ? teamStateSchema.parse(raw) : undefined
 }
 
+/**
+ * 删除本机团队及其派生数据。
+ *
+ * teamState 是聚合根；publications/idempotency/outbox 都带 teamId，
+ * teamLink 是本机成员配对凭证，必须一起删，否则留下幽灵配对。
+ */
+export async function deleteTeam(teamId: string): Promise<void> {
+  await db.transaction(
+    'rw',
+    db.teamState,
+    db.teamPublications,
+    db.teamIdempotency,
+    db.teamOutbox,
+    db.teamLink,
+    async () => {
+      await db.teamPublications.where('teamId').equals(teamId).delete()
+      await db.teamIdempotency.where('teamId').equals(teamId).delete()
+      await db.teamOutbox.where('teamId').equals(teamId).delete()
+      await db.teamLink.delete(teamId)
+      await db.teamState.delete(teamId)
+    },
+  )
+}
+
 export async function listTeams(): Promise<TeamState[]> {
   const all = await db.teamState.toArray()
   return all.map((t) => teamStateSchema.parse(t))
@@ -1080,10 +1108,10 @@ export interface TeamListItem {
 }
 
 export async function listTeamSummaries(): Promise<TeamListItem[]> {
-  const all = await db.teamState.toArray()
-  return all.map((t) => {
-    const parsed = teamStateSchema.parse(t)
-    return {
+  const summaries: TeamListItem[] = []
+  await db.teamState.each((raw) => {
+    const parsed = teamStateSchema.parse(raw)
+    summaries.push({
       teamId: parsed.teamId,
       name: parsed.name,
       myMemberId: parsed.myMemberId,
@@ -1096,8 +1124,9 @@ export async function listTeamSummaries(): Promise<TeamListItem[]> {
       latestPublication: parsed.latestPublication,
       createdAt: parsed.createdAt,
       updatedAt: parsed.updatedAt,
-    }
+    })
   })
+  return summaries
 }
 
 export async function getPublication(publicationId: string): Promise<{ meta: PublicationMeta; snapshot: PublicSnapshot } | undefined> {

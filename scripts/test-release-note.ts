@@ -35,12 +35,14 @@ check('Emoji 与多行透传', s3.releaseNote.includes('🎒') && s3.releaseNote
 const j3 = JSON.stringify(publicSnapshotSchema.parse(s3))
 check('序列化/反序列化后一致', (JSON.parse(j3) as { releaseNote: string }).releaseNote === s3.releaseNote)
 
-// 4. 500 字不崩溃（schema max 200，UI 层 slice 兜底；这里验证超长不炸）
+// 4. 500 字边界可生成、可校验；501 字才拒绝
 const long = '长'.repeat(500)
 const s4 = buildPublicSnapshot(team, 'p4', 1, 1000, long)
 check('超长文本不崩溃（build 层透传）', s4.releaseNote.length === 500)
 const r4 = publicSnapshotSchema.safeParse(s4)
-check('schema 拒绝超 200 字（UI 已 slice 兜底）', !r4.success)
+check('schema 接受 500 字边界', r4.success)
+const tooLong = buildPublicSnapshot(team, 'p5-long', 1, 1000, '长'.repeat(501))
+check('schema 拒绝 501 字', !publicSnapshotSchema.safeParse(tooLong).success)
 
 // 5. digest 随 releaseNote 变化（不同说明 = 不同快照）
 const s5 = buildPublicSnapshot(team, 'p5', 1, 1000, '另一句寄语')

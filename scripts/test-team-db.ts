@@ -56,6 +56,7 @@ import {
   getTeam,
   latestPublicationOf,
 } from '../src/db/teamActions'
+import { db } from '../src/db'
 import { buildPublicSnapshot } from '../src/team/domain'
 import type { PublicSnapshot } from '../src/team/schema'
 
@@ -116,7 +117,7 @@ async function testA12_A13() {
     operationId: 'op-p2',
     expectedDraftRevision: 1,
   })
-  check('同 operationId 幂等返回原版 v1 不增版', r3.ok && r3.version === 1 && !r3.created !== true)
+  check('同 operationId 幂等返回原版 v1 不增版', r3.ok && r3.version === 1 && r3.created === false)
 
   // expected 过期：草稿变了
   const t = await getTeam(teamId)
@@ -709,11 +710,54 @@ async function testExpenseMemberValidation() {
   check('入账且付款人=作者', after2!.expenses.length === 1 && after2!.expenses[0]!.payerMemberId === org)
   check('shares 总和等于金额', Object.values(after2!.expenses[0]!.shares).reduce((a, b) => a + b, 0) === 3600)
 }
+
+async function testExpenseWithoutAllocation() {
+  console.log('无批次费用（SPEC 3.5）')
+  const { createTeam, acceptSubmission, decideSubmission, getTeam } = await import('../src/db/teamActions')
+
+  const team = await createTeam({ name: '无批次费用团', organizerName: '甲' })
+  const author = team.roster[0]!.memberId
+  const accepted = await acceptSubmission({
+    teamId: team.teamId,
+    authorMemberId: author,
+    operationId: 'no-alloc-submit',
+    draft: {
+      submissionId: 'NO-ALLOC-1',
+      revision: 1,
+      teamId: team.teamId,
+      allocationId: null,
+      stage: 'purchase',
+      checkpointId: null,
+      taskRevision: team.draftRevision,
+      qty: null,
+      amountFen: 4200,
+      expenseReportId: 'er-no-alloc',
+      payerMemberId: author,
+      relatedAllocationIds: [],
+      note: '无批次交通费',
+    },
+  })
+  check('无批次费用可接收', accepted.ok)
+
+  const confirmed = await decideSubmission({
+    teamId: team.teamId,
+    organizerMemberId: author,
+    operationId: 'no-alloc-confirm',
+    submissionId: 'NO-ALLOC-1',
+    revision: 1,
+    decision: 'confirmed',
+  })
+  check('无批次费用可确认', confirmed.ok)
+  const saved = await getTeam(team.teamId)
+  check('无批次费用进入团队账本', saved!.expenses.length === 1 && saved!.expenses[0]!.amountFen === 4200)
+  check('无批次费用不伪造关联批次', saved!.expenses[0]!.relatedAllocationIds.length === 0)
+}
+
 // ---------- 列表投影：只带展示字段，不带大数组 ----------
 
 async function testTeamListProjection() {
   console.log('团队列表投影（内存优化）')
-  const { createTeam, saveTeam, listTeamSummaries } = await import('../src/db/teamActions')
+  const { createTeam, saveTeam, listTeamSummaries, deleteTeam } = await import('../src/db/teamActions')
 
   const base = await createTeam({ name: '投影团', organizerName: '甲' })
   const team = await saveTeam({
@@ -751,6 +795,55 @@ async function testTeamListProjection() {
   const fullJson = JSON.stringify(team).length
   const rowJson = JSON.stringify(row).length
   check('投影序列化后不大于完整版', rowJson <= fullJson)
+
+  const linked = {
+    teamId: team.teamId,
+    memberId: 'link-member',
+    memberName: '投影成员',
+    joinRequestId: 'link-jr',
+    deviceId: 'link-device',
+    credential: 'link-credential',
+    localTripId: null,
+    joinedAt: 1,
+  }
+  await db.teamLink.put(linked)
+  await db.teamIdempotency.put({
+    idempotencyKey: `${team.teamId}|m|action|op`,
+    teamId: team.teamId,
+    actorMemberId: 'm',
+    action: 'action',
+    operationId: 'op',
+    payloadDigest: 'digest',
+    result: { ok: true },
+    createdAt: 1,
+  })
+  await db.teamOutbox.put({
+    operationId: 'outbox-op',
+    teamId: team.teamId,
+    kind: 'submission',
+    payload: {},
+    createdAt: 1,
+    attempts: 0,
+  })
+  await db.teamPublications.put({
+    publicationId: 'delete-pub',
+    meta: {
+      teamId: team.teamId,
+      publicationId: 'delete-pub',
+      version: 1,
+      createdAt: 1,
+      digest: 'digest',
+      sourceDraftRevision: 1,
+    },
+    snapshot: buildPublicSnapshot(team, 'delete-pub', 1, 1),
+  })
+
+  await deleteTeam(team.teamId)
+  check('删除团队后聚合根消失', !(await db.teamState.get(team.teamId)))
+  check('删除团队后配对凭证消失', !(await db.teamLink.get(team.teamId)))
+  check('删除团队后幂等记录消失', (await db.teamIdempotency.where('teamId').equals(team.teamId).count()) === 0)
+  check('删除团队后 outbox 消失', (await db.teamOutbox.where('teamId').equals(team.teamId).count()) === 0)
+  check('删除团队后发布记录消失', (await db.teamPublications.where('teamId').equals(team.teamId).count()) === 0)
 }
 // ---------- P0 修复回归：并发幂等 / 载荷毒化 / 旧版报告 / 假回执 / 假摘要 ----------
 
@@ -877,16 +970,16 @@ async function testSaveTeamConcurrency() {
   const regress = await saveTeam({ ...after!, draftRevision: 1 }).catch((e) => ({ ok: false, error: String(e) }))
   check('draftRevision 回退被拒绝', 'error' in regress && !regress.ok)
 }
-// ---------- 组织者远程操作：手机主机只当算力端，组织者在别的设备上确认/发布 ----------
+// ---------- 组织者当面操作：同一现场扫码接入后确认/审批/发布 ----------
 
-async function testOrganizerRemote() {
-  console.log('组织者远程操作（dispatchAction 层）')
+async function testOrganizerOnSite() {
+  console.log('组织者当面操作（dispatchAction 层）')
   const { createTeam, saveTeam, acceptSubmission, approveJoin, registerJoinRequest } = await import('../src/db/teamActions')
   const { issueCredential, toB64u, generateCredentialSecret } = await import('../src/team/identity')
 
   // 模拟主机本地分发：直接驱动 dispatchAction 不可行（内部函数），用同层逻辑测试授权结果。
   // 这里验证的是组织者动作所依赖的授权事实与动作语义。
-  const t = await createTeam({ name: '远程团', organizerName: '甲' })
+  const t = await createTeam({ name: '当面操作团', organizerName: '甲' })
   const org = t.roster.find((m) => m.role === 'organizer')!.memberId
 
   // 成员提交一份报告，然后验证：
@@ -901,9 +994,9 @@ async function testOrganizerRemote() {
       relatedAllocationIds: ['a1'], note: '',
     },
   })
-  check('远程确认前置：报告已入库', true)
+  check('当面确认前置：报告已入库', true)
 
-  // 成员加入申请 → 组织者远程审批（organizer.approve 走 approveJoin/rejectJoin）
+  // 成员加入申请 → 组织者当面审批（organizer.approve 走 approveJoin/rejectJoin）
   await registerJoinRequest({
     teamId: t.teamId, joinRequestId: 'jr-remote', deviceId: 'dev-r',
     memberName: '小异', clientPub: 'pub-r',
@@ -911,13 +1004,13 @@ async function testOrganizerRemote() {
   const ap = await approveJoin({
     teamId: t.teamId, organizerMemberId: org, joinRequestId: 'jr-remote',
   })
-  check('组织者可远程审批加入', ap.ok)
+  check('组织者可当面审批加入', ap.ok)
   check('新成员已进名册', ap.ok && (await (await import('../src/db/teamActions')).getTeam(t.teamId))!.roster.length === 2)
 
-  // 凭证签发与角色解析：远程授权的根基
+  // 凭证签发与角色解析：组织者授权的根基
   const secret = generateCredentialSecret()
   const cred = await issueCredential(secret, t.teamId, ap.ok ? ap.memberId : 'x', 'dev-r')
-  check('远程签发的凭证可验证', cred.length > 0)
+  check('签发的凭证可验证', cred.length > 0)
 
   // organizer.state 不泄漏凭证密钥（hostService 层置 null）
   const { getTeam } = await import('../src/db/teamActions')
@@ -1028,10 +1121,11 @@ async function main() {
   await testStaleOnDraftBump()
   await testExpenseReportIdOwnership()
   await testExpenseMemberValidation()
+  await testExpenseWithoutAllocation()
   await testTeamListProjection()
   await testP0Regressions()
   await testSaveTeamConcurrency()
-  await testOrganizerRemote()
+  await testOrganizerOnSite()
   await testAuditFixes()
   await testA34ProxyToPlain()
   if (failed > 0) {

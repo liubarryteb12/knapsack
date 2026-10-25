@@ -2,8 +2,9 @@
 import { computed } from 'vue'
 import { NConfigProvider, NMessageProvider, NGlobalStyle, zhCN, dateZhCN, darkTheme, type GlobalThemeOverrides } from 'naive-ui'
 import { RouterLink, RouterView } from 'vue-router'
-import { Map, Settings, Backpack, Users } from '@lucide/vue'
+import { CalendarDays, Map, Settings, Backpack, Users, Wallet } from '@lucide/vue'
 import { useThemeStore } from './stores/theme'
+import { modState } from './core/modRegistry'
 
 const theme = useThemeStore()
 
@@ -31,11 +32,19 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => ({
             <span class="app-logo-text">行囊</span>
           </div>
           <nav class="app-nav">
-            <RouterLink class="app-nav-item" to="/" exact-active-class="router-link-active">
+            <RouterLink v-if="modState.trip" class="app-nav-item" to="/" exact-active-class="router-link-active">
               <span class="app-nav-icon"><Map :size="19" :stroke-width="2" /></span>
               <span>旅行</span>
             </RouterLink>
-            <RouterLink class="app-nav-item" to="/teams" exact-active-class="router-link-active">
+            <RouterLink v-if="modState.daily" class="app-nav-item" to="/daily" exact-active-class="router-link-active">
+              <span class="app-nav-icon"><CalendarDays :size="19" :stroke-width="2" /></span>
+              <span>每日</span>
+            </RouterLink>
+            <RouterLink v-if="modState.finance" class="app-nav-item" to="/finance" exact-active-class="router-link-active">
+              <span class="app-nav-icon"><Wallet :size="19" :stroke-width="2" /></span>
+              <span>账房</span>
+            </RouterLink>
+            <RouterLink v-if="modState.trip" class="app-nav-item" to="/teams" exact-active-class="router-link-active">
               <span class="app-nav-icon"><Users :size="19" :stroke-width="2" /></span>
               <span>团队</span>
             </RouterLink>
@@ -44,7 +53,7 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => ({
               <span>设置</span>
             </RouterLink>
           </nav>
-          <p class="app-version">v1.0.1</p>
+          <p class="app-version">v1.1.2</p>
         </aside>
         <main class="app-main">
           <RouterView v-slot="{ Component }">
@@ -212,8 +221,8 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => ({
     flex-direction: column;
     align-items: center;
     gap: 2px;
-    padding: 6px 20px;
-    font-size: 11px;
+    padding: 6px 8px;
+    font-size: 10px;
   }
 
   /* 底部导航不要左竖条 */
