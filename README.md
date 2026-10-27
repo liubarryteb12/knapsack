@@ -1,287 +1,52 @@
 # 行囊 Knapsack
 
-本地优先的模块化个人生活系统。当前包含旅行、日常规划、日常账房、提示词库与团队分享模块，数据 100% 存本地（IndexedDB），无账号、无云端服务器、无遥测、无云同步。
-
-核心气质：轻量。统一条目模型、整数分记账、`.trip` 单文件交换格式。
-
-完整操作说明见 [用户使用教程](docs/USER_GUIDE.md)。
-
-## 当前功能
-
-- 日常规划：按日期管理任务与时间块、完成状态、随手备忘录自动保存、每日三问复盘；模块可在设置中独立开关
-- 日常账房：本地花费快速记录、月度合计、近 7 日趋势、分类消费结构；可选择性导入旅行花费并自动去重，不修改旅行账本
-- 提示词库：工作、生图、生视频三态提示词，变量 Runner、词块字典、四维筛选、缩略图与全局速存
-- 团队分享：独立团队工作台、跨模块标准包、只读/协同权限、分片二维码、版本 Diff 与受控合入
-- 旅行管理：新建/复制/删除/导出导入 `.trip` 文件（导入前强制校验，覆盖或另存二选一）
-- 行程时间轴：按天组织，条目含时间/类型/标题/备注/完成勾选，支持天内拖拽排序与跨天移动，撤销栈 50 步
-- 预算与花费：总预算 + 分类预算（交通/住宿/餐饮/游玩/其他分项额度与已用进度）、花费记录（付款人 + 均分/按份/自定义三种分摊）、结算建议（净额贪心算法）、花费合并导入（按 id 去重）、预算单独导入（只读文件预算字段，覆盖前确认）
-- 行李清单：城市/海边/山野/通用四套内置模板，自定义分组与条目，打包进度
-- 备忘录：自由文本，停止输入 1 秒自动保存
-- 模块开关：按旅行控制预算/备忘模块显隐
-- 外观：浅色 / 深色 / 跟随系统三档主题，选择只存本机；首屏前置应用主题，深色下不闪白
-- AI 行程草稿（可选）：OpenAI 兼容接口生成行程，模型名由用户点击“获取列表”后拉取（合并内置候选），Zod 校验 + 失败回喂重试 1 次，预览确认后只能保存为新旅行，绝不覆盖现有数据
-- 天气（可选）：用户点击“查看目的地天气”后才请求 Open-Meteo；离线或失败时保留重试入口，不后台自动联网
-- 局域网会话（可选）：同一 WiFi 下 PC 当主机、手机扫码接入，AES-256-GCM 加密、整份覆盖式双向同步一份行程，不经过任何云端服务器
-- 长列表：旅行列表只加载展示摘要，按 24 张分页渲染；完整行程仅在打开详情时读取
-
-## 边界与发布门禁
-
-- 数据默认 100% 在本机 IndexedDB；无账号、无云同步、无遥测、无支付/转账/银行卡接口。
-- 可选 AI 会访问用户配置的 OpenAI 兼容接口；可选天气会访问 Open-Meteo；局域网会话只连接同一 WiFi 内的用户设备。
-- 发布门禁与已知问题见 `docs/RELEASE_GATE_v1.3.0.md`、`docs/RELEASE_NOTES_v1.3.0.md`、`docs/KNOWN_ISSUES_v1.3.0.md`。
-- 发布前运行 `npm run audit:boundary`，检查权限、CSP、依赖和网络调用点。
-
-## 安装与运行
-
-```bash
-npm install
-npm run dev      # 开发调试 http://localhost:5173
-npm run build    # 类型检查 + 产物构建
-```
-
-需要 Node 20+。
-
-## 数据格式 trip.v1
-
-每个旅行计划是一个 JSON 对象，导出文件后缀 `.trip`（即本 JSON 的美化序列化）：
-
-```jsonc
-{
-  "format": "trip.v1",              // 格式名+版本号，导入校验第一关
-  "id": "V1StGXR8_Z5j",             // 本地主键
-  "name": "五一杭州行",
-  "startDate": "2026-05-01",        // yyyy-MM-dd
-  "endDate": "2026-05-03",
-  "destType": "city",               // city / beach / mountain / generic，行李模板用
-  "destCity": "杭州",               // 城市名，天气功能用
-  "totalBudgetFen": 500000,         // 金额一律整数分：5000.00 元 = 500000
-  "categoryBudgetsFen": {},         // 分类预算（可选）
-
-  "members": [                      // 参与人，本地数据，无需注册
-    { "id": "m1", "name": "我", "role": "owner" },
-    { "id": "m2", "name": "小李", "role": "member" }
-  ],
-
-  "days": [
-    { "date": "2026-05-01",
-      "items": [
-        { "id": "i1", "time": "09:00",
-          "type": "transport",      // transport / stay / food / play / other
-          "title": "高铁去杭州",
-          "note": "G7349 虹桥 8:12 开",
-          "linkedExpenseId": null, "done": false }
-      ] }
-  ],
+本地优先的模块化个人生活系统。数据默认保存在本机，无账号、不上传数据到云端、不收集使用数据、不提供云同步。
 
-  "expenses": [                     // 无成员时为空且入口隐藏
-    { "id": "e1", "date": "2026-05-01", "category": "transport",
-      "title": "高铁票", "amountFen": 29200, "payerId": "m1",
-      "split": { "mode": "equal", "memberIds": ["m1", "m2"] } }
-      // split.mode: equal 均分 / shares 按份 / custom 自定义金额
-  ],
+- [用户使用教程](docs/USER_GUIDE.md)
+- [v1.3.0 发布说明](docs/RELEASE_NOTES_v1.3.0.md)
+- [v1.3.0 已知问题](docs/KNOWN_ISSUES_v1.3.0.md)
 
-  "packing": [
-    { "group": "证件", "items": [ { "id": "k1", "label": "身份证", "packed": false } ] }
-  ],
+## 功能
 
-  "notes": "",                      // 备忘区，自由文本
-  "enabledModules": { "expenses": true, "notes": true }
-}
-```
+- 旅行：行程安排、预算与分摊、行李清单、旅行备忘、单文件导出导入
+- 每日：任务与时间块、随手备忘、每日复盘、昨日未完成任务顺延
+- 账房：本地花费记录、月度预算、分类统计、旅行花费导入
+- 提示词库：工作、生图、生视频提示词，变量填充、词块、筛选、速存与分享
+- 团队分享：群组与名册、跨模块标准包、二维码收发、版本对比与审核后合入
+- 设置：主题、模块开关、本地备份恢复、AI 接口配置
+- 局域网会话：同一 WiFi 下的设备互传一份旅行
 
-硬规则：
+## 安装
 
-- Zod Schema（`src/mods/mod-trip/schema.ts`）是唯一事实源：内部写入、文件导入、AI 返回结果全部先过校验
-- 金额一律整数分存储，界面输入元、展示时除以 100，禁止任何浮点金额运算
-- 所有 id 用 nanoid 生成；日期 `yyyy-MM-dd`，时间 `HH:mm`
-- 导入失败给人话错误提示，绝不静默写入；结算建议不落盘，每次现算
+### Windows
 
-## 开发
+安装 `Knapsack-1.3.0-x64-setup.exe`，或运行免安装版 `Knapsack-1.3.0-portable.exe`。
 
-```bash
-npm test                    # 全量自动化回归
-npm run audit:boundary      # 发布边界与网络调用检查
-npm run audit:modules       # 模块依赖边界检查
-npm run mod:sync            # 重建模块索引
-```
+### Android
 
-技术栈：Vue 3 + TypeScript strict + Vite + Pinia + Vue Router + Dexie(IndexedDB) + Zod + Sortable.js + Naive UI。
+安装 `Knapsack-1.3.0-release.apk`，支持 Android 7.0 及以上。首次安装时，系统可能要求允许当前来源安装应用。
 
-## 打包与安装
+当前安装包适合内部试用。若系统提示未知发布者，请先确认文件来源可信。
 
-### Windows 桌面版（Tauri 2）
+## 使用
 
-```bash
-npx tauri build                          # 需 Rust + MSVC 工具链
-```
+完整操作步骤见 [用户使用教程](docs/USER_GUIDE.md)。
 
-产物：
+## 数据与隐私
 
-- 安装包 `src-tauri/target/release/bundle/nsis/Knapsack_1.3.0_x64-setup.exe`
-- 免安装单文件 `src-tauri/target/release/app.exe`
+- 核心数据默认只保存在当前设备。
+- 无账号、不上传数据到云端、不收集使用数据、不提供云同步。
+- AI 功能只会请求你配置的 AI 服务。
+- 天气功能只在你主动查询时请求外部天气服务 Open-Meteo。
+- 局域网会话和团队二维码只连接同一现场的附近设备。
+- 应用不提供支付、转账、银行卡或其他金融接口。
 
-安装后是独立桌面程序，数据存在本机 IndexedDB。旅行、每日规划、账房和提示词等本地核心功能可离线使用；AI、天气、局域网互传和团队二维码需要各自的网络、相机或现场条件。
+卸载应用或清除应用数据会删除本机内容。重要数据请定期使用“设置 → 本地备份”导出备份。
 
-### 安卓版（Capacitor）
+## 版本与问题
 
-前置：**JDK 21**、Android SDK（platform-tools / build-tools / platforms）。
-Capacitor 的 Android 模块要求 `sourceCompatibility 21`，用 JDK 17 会报
-`错误: 无效的源发行版：21`。
-
-```bash
-npm run build                     # 生成 dist/
-npx cap sync android              # 把 web 产物与配置同步进 android 工程
-cd android
-.\gradlew.bat assembleDebug       # Windows；macOS/Linux 用 ./gradlew assembleDebug
-```
-
-产物：`android/app/build/outputs/apk/debug/app-debug.apk`
-（仓库另拷了一份到 `release/Knapsack-debug.apk`，`release/` 不入库）
-
-应用信息：包名 `com.liubarryteb12.knapsack`，minSdk 24（Android 7.0+），targetSdk 36。
-
-首次构建需联网下载 Gradle 与依赖。走代理时在 `~/.gradle/gradle.properties` 里加：
-
-```properties
-systemProp.http.proxyHost=127.0.0.1
-systemProp.http.proxyPort=7890
-systemProp.https.proxyHost=127.0.0.1
-systemProp.https.proxyPort=7890
-```
-
-生成正式 Release 签名包时，复制 `android/keystore.properties.example` 为
-`android/keystore.properties` 并填入 keystore 路径、别名和密码，然后运行
-`.\gradlew.bat assembleRelease`。未提供该文件时会回退到 Android debug key，
-只适合内部试用，不能作为商店正式包。
-
-## 红米 K20 / K40（HyperOS / MIUI）安装与保活设置
-
-红米机型的系统默认限制后台与自启动，还拦截 adb/未知来源安装。按顺序做一遍，
-避免「用着用着数据像丢了」。
-
-### 1. 允许安装（安装前必做）
-
-`设置 → 更多设置 → 开发者选项`：
-
-- 打开 **「USB 调试」**
-- 打开 **「USB 调试（安全设置）」/「通过 USB 安装」**。不开这一步，用数据线
-  `adb install` 会报 `INSTALL_FAILED_USER_RESTRICTED: Install canceled by user`
-
-直接用手机装 APK 时，首次会提示“已屏蔽安装未知应用”，点「设置」→ 允许该来源即可。
-
-### 2. 关闭电池优化（必须）
-
-`设置 → 应用设置 → 应用管理 → 行囊 Knapsack → 省电策略` → 选 **无限制**
-（不要选“智能限制后台运行”或“后台运行超过 10 分钟关闭”）。
-
-### 3. 允许自启动与后台弹出（必须）
-
-`设置 → 应用设置 → 应用管理 → 行囊 Knapsack → 权限管理`：
-
-- 打开「自启动」
-- 打开「后台弹出界面」（否则从别的应用切回来可能黑屏）
-- 「显示悬浮窗」按需开启
-
-再到 `设置 → 应用设置 → 授权管理 → 自启动管理`，确认 Knapsack 在允许列表内。
-
-### 4. 锁定最近任务
-
-打开多任务卡片视图，把 Knapsack 卡片**下拉或点小锁图标**锁定，防止一键清理时被清掉。
-
-### 5. 关掉省电模式与「不保留活动」
-
-`设置 → 电池 → 省电模式` 关闭；开发者选项里的「不保留活动」也要关，否则切后台即被销毁。
-
-### 6. 数据安全提醒
-
-- 数据存在 IndexedDB，**卸载应用会连数据一起删除**。重要行程随手用「导出 .trip」备份到手机存储或发给自己。
-- `设置 → 应用管理 → 行囊 Knapsack → 清除数据` 同样会清空行程，非必要不要点。
-
-## 局域网会话（多设备同步）
-
-同一 WiFi 下，把 PC（Tauri 桌面版）当主机，手机扫码接入，双向同步一份行程。
-不经过任何云端服务器，全程只有两台设备互连。
-
-### 用法
-
-主机（PC 桌面版）：
-
-1. 打开某个行程 → 右上角「局域网会话」
-2. 面板里显示二维码；多网卡时可在下拉里切换 IP（默认首选内网地址）
-3. 保持面板打开（关闭面板即结束会话）
-
-接入方（手机）：
-
-1. 打开同一行程 → 「🔗 局域网会话」
-2. 点「扫码加入」扫 PC 上的二维码；或把会话码粘贴进输入框后点「连接」
-3. 连上后二选一：
-   - 「从主机拉取（覆盖本地）」：用主机版本覆盖本机
-   - 「把我的版本推给主机」：把本机版本推给主机
-
-### 同步语义
-
-- **整份覆盖**，不做字段级合并：拉取 / 推送都是拿一份完整 `trip.v1` 覆盖对方
-- 覆盖前先把本地旧版本压入撤销栈，随时可撤销
-- 主机面板关闭即结束会话，接入方的连接随之失效
-
-### 安全模型
-
-- 传输走局域网**明文 HTTP**，机密性由**应用层加密**保证：
-  载荷用 **AES-256-GCM** 信封加密，线格式 `nonce(12B) || 密文 || tag(16B)`
-- 会话密钥 32 字节随机生成，**只出现在二维码/会话码里**，不经网络明文传输；
-  同一 WiFi 下嗅探只能看到密文
-- 主机对每个 `/pull`、`/push` 都先验 tag 再处理，密钥不对直接拒绝
-- 会话码里含密钥，**别截图外发**；结束会话（关面板）后密钥即失效
-
-### 协议
-
-- 应用标识 `knapsack-session/1`
-- 端点：`GET /info`（取主机行程名，便于接入方确认连对了人）、`POST /pull`、`POST /push`
-- 会话码（二维码内容）格式：
-
-  ```text
-  knapsack-session/1?ip=<主机IP>&port=<端口>&k=<base64url 会话密钥>&s=<会话号>
-  ```
-
-- Rust 侧（`src-tauri/src/session.rs`）与前端（`src/engines/lan-share-engine/lanSessionProtocol.ts`）
-  共用同一线格式，跨语言 KAT 对拍测试保证两种实现互解（见 `scripts/test-lansession.ts`）
-- 安卓端要在 WebView 里访问明文 `http://`，已在 `capacitor.config.ts`
-  （`server.cleartext`、`allowMixedContent`）与 `AndroidManifest.xml`
-  （`usesCleartextTraffic`）放开；安全性由上面的 AES-GCM 保证，而非 TLS
-
-### 真机联调
-
-仓库内置一个开发主机，不依赖 Tauri 外壳，直接在局域网里起真实服务：
-
-```bash
-cd src-tauri
-cargo test --lib dev_host -- --ignored --nocapture   # 起服务并打印会话码，挂住 10 分钟
-```
-
-把打印出的会话码粘到手机端「局域网会话」里即可走真实网络路径；收到手机推送时会实时打印。
-
-## 安全与隐私
-
-数据 100% 本地：无账号、无云端服务器、无遥测。在此基础上做了以下加固（v1.0.1）：
-
-- **内容安全策略**：Tauri 桌面端启用严格 CSP（`default-src 'self'`，脚本只允许自身
-  与 wasm），收窄注入面；`connect-src` 仅放行 HTTPS 与局域网/本机网段（AI 接口与会话）
-- **API Key 加密存储**：AI 接口的 Key 不再明文落盘。首次使用时生成一台设备一份的
-  随机主密钥（KEK），用 **AES-256-GCM** 把 Key 加成密文存入 localStorage；
-  旧版明文 Key 会被自动升级为密文，用户无感
-- **安卓防备份**：`android:allowBackup="false"`，阻止通过 `adb backup` /
-  云备份提取应用数据（含 KEK 与密文）
-- **局域网会话纵深防御**：除 AES-256-GCM 信封加密外，握手响应携带共享行程 id，
-  接入方 pull/push 前后都会校验行程一致性，拒绝写入不相干行程
-- **会话密钥生命周期**：密钥只在二维码/会话码里出现，关闭会话面板即清空密钥，
-  服务端内存中的共享行程随之销毁
-- **输入校验**：所有跨边界数据（`.trip` 导入、AI 草稿、局域网 pull/push）
-  一律先过 Zod schema 再落库
-
-## 后续规划
-
-- 可选：导出文件加密（口令派生密钥）
-- 可选：Android Keystore 硬件级 KEK 存储
+- [v1.3.0 发布说明](docs/RELEASE_NOTES_v1.3.0.md)
+- [v1.3.0 已知问题](docs/KNOWN_ISSUES_v1.3.0.md)
 
 ## 开源协议
 
