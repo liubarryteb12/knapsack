@@ -155,6 +155,7 @@ export async function runA22(rec: Recorder, outDir: string): Promise<void> {
       sessionId: hsOld.sessionId,
       decrypted: hsOld.decrypted,
       decryptError: hsOld.decryptError,
+      bodyText: clip(String(hsOld.bodyText ?? ''), 500),
       fatal: hsOld.fatal,
     }
     requireTrue(!hsOld.fatal, '旧会话握手异常：' + String(hsOld.fatal))
@@ -244,6 +245,7 @@ export async function runA22(rec: Recorder, outDir: string): Promise<void> {
       sessionId: hsNew.sessionId,
       decrypted: hsNew.decrypted,
       decryptError: hsNew.decryptError,
+      bodyText: clip(String(hsNew.bodyText ?? ''), 500),
       fatal: hsNew.fatal,
     }
     requireTrue(hsNew.status === 200, '新会话握手 HTTP 状态应为 200，实际 ' + String(hsNew.status))

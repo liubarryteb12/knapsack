@@ -18,21 +18,41 @@ export const dailyTimeSchema = z
   .regex(/^([01]\d|2[0-3]):[0-5]\d$/, '时间格式应为 HH:mm')
   .nullable()
 
+export const dailyTaskStatusSchema = z.enum(['TODO', 'DONE', 'ROLLED_OVER'])
+
+export function timeToMinute(value: string): number {
+  const [hour, minute] = value.split(':').map(Number)
+  return (hour ?? 0) * 60 + (minute ?? 0)
+}
+
+export function minuteToTime(value: number): string {
+  const normalized = ((value % (24 * 60)) + 24 * 60) % (24 * 60)
+  const hour = Math.floor(normalized / 60)
+  const minute = normalized % 60
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+}
+
+export function normalizeEndMinute(startMinute: number | null, endMinute: number | null): number | null {
+  if (startMinute === null || endMinute === null) return endMinute
+  return endMinute < startMinute ? endMinute + 24 * 60 : endMinute
+}
+
 export const dailyTaskSchema = z
   .object({
     id: z.string().min(1),
     title: z.string().trim().min(1, '任务标题不能为空'),
     startTime: dailyTimeSchema.default(null),
     endTime: dailyTimeSchema.default(null),
+    startMinute: z.number().int().min(0).max(1440).nullable().default(null),
+    endMinute: z.number().int().min(0).max(1620).nullable().default(null),
     done: z.boolean().default(false),
+    status: dailyTaskStatusSchema.default('TODO'),
+    originTaskId: z.string().min(1).nullable().default(null),
+    rolloverCount: z.number().int().min(0).default(0),
     note: z.string().default(''),
     createdAt: z.number().int().min(0),
     updatedAt: z.number().int().min(0),
   })
-  .refine(
-    (task) => !task.startTime || !task.endTime || task.endTime >= task.startTime,
-    { message: '结束时间不能早于开始时间' },
-  )
   .refine((task) => !task.endTime || !!task.startTime, {
     message: '设置结束时间时必须填写开始时间',
   })
@@ -54,6 +74,7 @@ export const dailyDaySchema = z.object({
 })
 
 export type DailyTask = z.infer<typeof dailyTaskSchema>
+export type DailyTaskStatus = z.infer<typeof dailyTaskStatusSchema>
 export type DailyReview = z.infer<typeof dailyReviewSchema>
 export type DailyDay = z.infer<typeof dailyDaySchema>
 
@@ -61,12 +82,20 @@ export function newDailyTask(
   input: { title: string; startTime?: string | null; endTime?: string | null; note?: string },
   now = Date.now(),
 ): DailyTask {
+  const startMinute = input.startTime ? timeToMinute(input.startTime) : null
+  const rawEndMinute = input.endTime ? timeToMinute(input.endTime) : null
+  const endMinute = normalizeEndMinute(startMinute, rawEndMinute)
   return dailyTaskSchema.parse({
     id: nanoid(10),
     title: input.title,
     startTime: input.startTime ?? null,
     endTime: input.endTime ?? null,
+    startMinute,
+    endMinute,
     done: false,
+    status: 'TODO',
+    originTaskId: null,
+    rolloverCount: 0,
     note: input.note ?? '',
     createdAt: now,
     updatedAt: now,
@@ -86,5 +115,20 @@ export function createDailyDay(date: string, now = Date.now()): DailyDay {
 }
 
 export function parseDailyDay(value: unknown): DailyDay {
-  return dailyDaySchema.parse(value)
+  const parsed = dailyDaySchema.parse(value)
+  return {
+    ...parsed,
+    tasks: parsed.tasks.map((task) => {
+      const startMinute = task.startMinute ??
+        (task.startTime ? timeToMinute(task.startTime) : null)
+      const rawEndMinute = task.endMinute ??
+        (task.endTime ? timeToMinute(task.endTime) : null)
+      return {
+        ...task,
+        startMinute,
+        endMinute: normalizeEndMinute(startMinute, rawEndMinute),
+        status: task.done ? 'DONE' : task.status === 'DONE' ? 'TODO' : task.status,
+      }
+    }),
+  }
 }

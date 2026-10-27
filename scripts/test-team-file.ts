@@ -13,9 +13,9 @@ import {
   dedupeSubmissions,
   publicFileName,
   submissionFileName,
-} from '../src/team/teamFile'
-import { buildPublicSnapshot, digestOf } from '../src/team/domain'
-import { submissionSchema, teamStateSchema, type Submission, type TeamState } from '../src/team/schema'
+} from '../src/mods/mod-team/domain/teamFile'
+import { buildPublicSnapshot, digestOf } from '../src/mods/mod-team/domain/domain'
+import { submissionSchema, teamStateSchema, type Submission, type TeamState } from '../src/mods/mod-team/domain/schema'
 
 let failed = 0
 function check(name: string, cond: boolean) {

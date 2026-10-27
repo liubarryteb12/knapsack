@@ -9,6 +9,8 @@ import {
   NInput,
   NModal,
   NPopconfirm,
+  NRadioButton,
+  NRadioGroup,
   NSelect,
   NTag,
   useMessage,
@@ -18,22 +20,34 @@ import {
   Pencil,
   Plus,
   ReceiptText,
+  Target,
   Trash2,
   TrendingUp,
   Wallet,
 } from '@lucide/vue'
 import UiPageHeader from '../../components/ui/UiPageHeader.vue'
 import UiStatCard from '../../components/ui/UiStatCard.vue'
-import { db } from '../../db'
+import { modRegistry } from '../../core/bootMods'
+import type { SpecialExpenseLedgerEntry } from '../../core/capabilityContracts'
 import { todayStr } from '../../utils/date'
 import { fenToYuan, formatFen, yuanToFen } from '../../utils/money'
 import {
+  defaultNatureFor,
   FINANCE_CATEGORY_LABELS,
+  FINANCE_NATURE_LABELS,
   travelCategoryToFinance,
   type FinanceCategory,
   type FinanceEntry,
+  type FinanceNature,
 } from './schema'
-import { categoryBreakdown, entriesInMonth, last7Days, sumFen } from './stats'
+import {
+  categoryBreakdown,
+  compositionEntries,
+  entriesInMonth,
+  last7Days,
+  natureBreakdown,
+  sumFen,
+} from './stats'
 import { useFinanceStore, type TripExpenseSelection } from './store'
 
 const store = useFinanceStore()
@@ -41,19 +55,34 @@ const message = useMessage()
 const today = todayStr()
 const month = ref(today.slice(0, 7))
 const categoryFilter = ref<'all' | FinanceCategory>('all')
+const includeTrip = ref(true)
+const budgetDraft = ref('0.00')
+const savingBudget = ref(false)
 
 const categoryOptions = (Object.entries(FINANCE_CATEGORY_LABELS) as [FinanceCategory, string][]).map(
   ([value, label]) => ({ value, label }),
 )
 const filterOptions = [{ value: 'all', label: '全部类别' }, ...categoryOptions]
+const natureOptions = (Object.entries(FINANCE_NATURE_LABELS) as [FinanceNature, string][]).map(
+  ([value, label]) => ({ value, label }),
+)
 
-onMounted(() => {
-  void store.load()
+onMounted(async () => {
+  await store.load()
+  budgetDraft.value = fenToYuan(store.budgetFen)
 })
 
-watch(month, (value) => {
-  void store.loadMonth(value)
+watch(month, async (value) => {
+  await store.loadMonth(value)
+  budgetDraft.value = fenToYuan(store.budgetFen)
 })
+
+watch(
+  () => store.budgetFen,
+  (value) => {
+    budgetDraft.value = fenToYuan(value)
+  },
+)
 
 const monthEntries = computed(() => entriesInMonth(store.entries, month.value))
 const filteredEntries = computed(() =>
@@ -63,9 +92,32 @@ const filteredEntries = computed(() =>
 )
 const monthTotal = computed(() => sumFen(monthEntries.value))
 const todayTotal = computed(() => sumFen(store.entries.filter((e) => e.date === today)))
-const breakdown = computed(() => categoryBreakdown(monthEntries.value))
+const analysisRows = computed(() => compositionEntries(monthEntries.value, includeTrip.value))
+const analysisTotal = computed(() => sumFen(analysisRows.value))
+const breakdown = computed(() => categoryBreakdown(analysisRows.value))
+const natureStats = computed(() => natureBreakdown(analysisRows.value))
 const trend = computed(() => last7Days(store.entries, today))
 const trendMax = computed(() => Math.max(1, ...trend.value.map((d) => d.totalFen)))
+const budgetPct = computed(() =>
+  store.budgetFen > 0 ? Math.round((monthTotal.value / store.budgetFen) * 100) : 0,
+)
+const budgetRemaining = computed(() => store.budgetFen - monthTotal.value)
+
+async function saveBudget() {
+  const amountFen = yuanToFen(budgetDraft.value)
+  if (amountFen === null) {
+    message.error('预算金额格式不对')
+    return
+  }
+  savingBudget.value = true
+  const ok = await store.saveBudget(month.value, amountFen)
+  savingBudget.value = false
+  if (!ok) {
+    message.error(store.error || '预算保存失败')
+    return
+  }
+  message.success(amountFen > 0 ? '月度预算已保存' : '已关闭本月预算预警')
+}
 
 function categoryLabel(category: FinanceCategory): string {
   return FINANCE_CATEGORY_LABELS[category]
@@ -80,8 +132,16 @@ const quick = ref({
   date: today,
   amountYuan: '',
   category: 'food' as FinanceCategory,
+  natureTag: 'ESSENTIAL' as FinanceNature,
   note: '',
 })
+
+watch(
+  () => quick.value.category,
+  (category) => {
+    quick.value.natureTag = defaultNatureFor(category, 'manual')
+  },
+)
 
 async function addQuick() {
   const amountFen = yuanToFen(quick.value.amountYuan)
@@ -93,6 +153,7 @@ async function addQuick() {
     date: quick.value.date,
     amountFen,
     category: quick.value.category,
+    natureTag: quick.value.natureTag,
     note: quick.value.note.trim(),
   })
   if (!entry) {
@@ -109,6 +170,7 @@ const editForm = ref({
   date: '',
   amountYuan: '',
   category: 'food' as FinanceCategory,
+  natureTag: 'ESSENTIAL' as FinanceNature,
   note: '',
 })
 
@@ -118,6 +180,7 @@ function openEdit(entry: FinanceEntry) {
     date: entry.date,
     amountYuan: fenToYuan(entry.amountFen),
     category: entry.category,
+    natureTag: entry.natureTag,
     note: entry.note,
   }
 }
@@ -134,6 +197,7 @@ async function saveEdit() {
     date: editForm.value.date,
     amountFen,
     category: editForm.value.category,
+    natureTag: editForm.value.natureTag,
     note: editForm.value.note.trim(),
   })
   if (!ok) {
@@ -154,23 +218,19 @@ const selectedImport = ref<string[]>([])
 const importing = ref(false)
 
 function importKey(item: TripExpenseSelection): string {
-  return `${item.tripId}:${item.expense.id}`
+  return `${item.tripId}:${item.expenseId}`
 }
 
 function alreadyImported(item: TripExpenseSelection): boolean {
-  const key = `trip:${item.tripId}:${item.expense.id}`
+  const key = `trip:${item.tripId}:${item.expenseId}`
   return store.entries.some((e) => e.sourceKey === key)
 }
 
 async function openImport() {
-  const trips = await db.trips.toArray()
-  importRows.value = trips.flatMap((trip) =>
-    trip.expenses.map((expense) => ({
-      tripId: trip.id,
-      tripName: trip.name,
-      expense,
-    })),
+  const ledgers = await modRegistry.capabilities.query<SpecialExpenseLedgerEntry[]>(
+    'capability:special-expense-ledger',
   )
+  importRows.value = ledgers.flat()
   selectedImport.value = []
   showImport.value = true
 }
@@ -190,12 +250,14 @@ async function doImport() {
     message.error(result.error)
     return
   }
-  message.success(`导入 ${result.imported} 笔，跳过已存在 ${result.skipped} 笔`)
+  message.success(
+    `导入 ${result.imported} 笔，更新 ${result.updated} 笔，跳过 ${result.skipped} 笔`,
+  )
   showImport.value = false
 }
 
 function importAmount(item: TripExpenseSelection): string {
-  return formatFen(item.expense.amountFen)
+  return formatFen(item.personalNetFen)
 }
 </script>
 
@@ -221,11 +283,47 @@ function importAmount(item: TripExpenseSelection): string {
       <UiStatCard :icon="TrendingUp" label="今日支出" :value="formatFen(todayTotal)" />
     </div>
 
+    <n-card size="small" class="section budget-card">
+      <div class="budget-head">
+        <div class="budget-title">
+          <span class="budget-icon"><Target :size="16" /></span>
+          <strong>月度预算水位</strong>
+        </div>
+        <div class="budget-form">
+          <n-input v-model:value="budgetDraft" placeholder="例如 5000.00" />
+          <n-button size="small" :loading="savingBudget" @click="saveBudget">保存预算</n-button>
+        </div>
+      </div>
+      <template v-if="store.budgetFen > 0">
+        <div class="budget-progress-head">
+          <span>已用 {{ formatFen(monthTotal) }} / {{ formatFen(store.budgetFen) }}</span>
+          <span :class="{ over: budgetRemaining < 0 }">
+            {{ budgetRemaining >= 0 ? '剩余' : '超支' }} {{ formatFen(Math.abs(budgetRemaining)) }}
+          </span>
+        </div>
+        <div class="budget-progress">
+          <div
+            class="budget-progress-fill"
+            :class="{ over: budgetPct >= 100 }"
+            :style="{ width: `${Math.min(100, budgetPct)}%` }"
+          />
+        </div>
+        <div class="budget-foot">
+          <span>{{ budgetPct }}%</span>
+          <span v-if="budgetPct >= 80" class="budget-warning">
+            {{ budgetPct >= 100 ? '本月预算已超支' : '本月预算接近上限' }}
+          </span>
+        </div>
+      </template>
+      <p v-else class="muted small budget-off">预算为 0 时不显示预警。</p>
+    </n-card>
+
     <n-card size="small" class="section" title="快速记一笔">
       <div class="quick-form">
         <input v-model="quick.date" class="field-input" type="date" aria-label="记账日期" />
         <n-input v-model:value="quick.amountYuan" placeholder="金额，例如 36.50" />
         <n-select v-model:value="quick.category" :options="categoryOptions" class="category-select" />
+        <n-select v-model:value="quick.natureTag" :options="natureOptions" class="nature-select" />
         <n-input v-model:value="quick.note" placeholder="备注（可选）" @keyup.enter="addQuick" />
         <n-button type="primary" :loading="store.saving" @click="addQuick">
           <template #icon><Plus :size="15" /></template>
@@ -235,7 +333,14 @@ function importAmount(item: TripExpenseSelection): string {
     </n-card>
 
     <div class="two-col">
-      <n-card size="small" title="消费结构">
+      <n-card size="small" title="消费双轴结构">
+        <template #header-extra>
+          <n-radio-group v-model:value="includeTrip" size="small">
+            <n-radio-button :value="true">含旅行</n-radio-button>
+            <n-radio-button :value="false">仅日常</n-radio-button>
+          </n-radio-group>
+        </template>
+        <p class="structure-label">业务类目</p>
         <div v-if="breakdown.length === 0" class="empty">本月还没有账目。</div>
         <div v-for="item in breakdown" :key="item.category" class="bar-row">
           <div class="bar-label">
@@ -243,9 +348,21 @@ function importAmount(item: TripExpenseSelection): string {
             <span class="muted">{{ formatFen(item.totalFen) }} · {{ item.percent.toFixed(1) }}%</span>
           </div>
           <div class="bar-track">
-            <div class="bar-fill" :style="{ width: barWidth(item.totalFen, monthTotal || 1) }" />
+            <div class="bar-fill" :style="{ width: barWidth(item.totalFen, analysisTotal || 1) }" />
           </div>
         </div>
+        <template v-if="natureStats.length > 0">
+          <p class="structure-label nature-label">消费成分</p>
+          <div v-for="item in natureStats" :key="item.nature" class="bar-row">
+            <div class="bar-label">
+              <span>{{ item.label }}</span>
+              <span class="muted">{{ formatFen(item.totalFen) }} · {{ item.percent.toFixed(1) }}%</span>
+            </div>
+            <div class="bar-track nature-track">
+              <div class="bar-fill nature-fill" :style="{ width: barWidth(item.totalFen, analysisTotal || 1) }" />
+            </div>
+          </div>
+        </template>
       </n-card>
 
       <n-card size="small" title="近 7 日趋势">
@@ -275,6 +392,7 @@ function importAmount(item: TripExpenseSelection): string {
         <div class="entry-main">
           <div class="entry-title">
             <n-tag size="tiny" :bordered="false">{{ categoryLabel(entry.category) }}</n-tag>
+            <n-tag size="tiny" type="info" :bordered="false">{{ FINANCE_NATURE_LABELS[entry.natureTag] }}</n-tag>
             <strong>{{ entry.note || '未填写备注' }}</strong>
             <n-tag v-if="entry.source === 'trip'" size="tiny" type="info" :bordered="false">旅行导入</n-tag>
           </div>
@@ -309,6 +427,8 @@ function importAmount(item: TripExpenseSelection): string {
         <n-input v-model:value="editForm.amountYuan" placeholder="例如 36.50" />
         <label>类别</label>
         <n-select v-model:value="editForm.category" :options="categoryOptions" />
+        <label>消费成分</label>
+        <n-select v-model:value="editForm.natureTag" :options="natureOptions" />
         <label>备注</label>
         <n-input v-model:value="editForm.note" type="textarea" :rows="3" placeholder="备注（可选）" />
       </div>
@@ -334,9 +454,9 @@ function importAmount(item: TripExpenseSelection): string {
         <div v-for="item in importRows" :key="importKey(item)" class="import-row">
           <n-checkbox :value="importKey(item)" :disabled="alreadyImported(item)" />
           <div class="import-main">
-            <strong>{{ item.expense.title }}</strong>
+            <strong>{{ item.title }}</strong>
             <span class="muted small">
-              {{ item.tripName }} · {{ item.expense.date }} · {{ categoryLabel(travelCategoryToFinance(item.expense.category)) }}
+              {{ item.tripName }} · {{ item.date }} · {{ categoryLabel(travelCategoryToFinance(item.category)) }}
             </span>
           </div>
           <span class="amount">{{ importAmount(item) }}</span>
@@ -388,6 +508,77 @@ function importAmount(item: TripExpenseSelection): string {
   margin-bottom: var(--space-3);
 }
 
+.budget-card {
+  padding-bottom: var(--space-3);
+}
+
+.budget-head,
+.budget-progress-head,
+.budget-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.budget-title,
+.budget-form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.budget-icon {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--app-accent-soft);
+  color: var(--app-accent);
+}
+
+.budget-form :deep(.n-input) {
+  width: 150px;
+}
+
+.budget-progress-head,
+.budget-foot {
+  margin-top: var(--space-3);
+  color: var(--app-muted);
+  font-size: var(--text-xs);
+}
+
+.budget-progress {
+  height: 9px;
+  margin-top: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--app-accent-tint);
+}
+
+.budget-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--app-accent-solid);
+  transition: width var(--dur-normal) var(--ease);
+}
+
+.budget-progress-fill.over {
+  background: var(--app-danger);
+}
+
+.over,
+.budget-warning {
+  color: var(--app-danger);
+}
+
+.budget-off {
+  margin: var(--space-2) 0 0;
+}
+
 .section {
   margin-bottom: var(--space-4);
 }
@@ -411,6 +602,11 @@ function importAmount(item: TripExpenseSelection): string {
 .quick-form .category-select {
   flex: 0 1 120px;
   min-width: 120px;
+}
+
+.quick-form .nature-select {
+  flex: 0 1 130px;
+  min-width: 130px;
 }
 
 .quick-form .n-button {
@@ -447,6 +643,25 @@ function importAmount(item: TripExpenseSelection): string {
   height: 100%;
   border-radius: inherit;
   background: var(--app-accent-solid);
+}
+
+.structure-label {
+  margin: 0 0 var(--space-2);
+  color: var(--app-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.nature-label {
+  margin-top: var(--space-5);
+}
+
+.nature-track {
+  background: var(--type-play-soft);
+}
+
+.nature-fill {
+  background: var(--type-play);
 }
 
 .trend {
@@ -571,12 +786,22 @@ function importAmount(item: TripExpenseSelection): string {
     justify-content: space-between;
   }
 
+  .budget-form {
+    width: 100%;
+  }
+
+  .budget-form :deep(.n-input) {
+    flex: 1;
+    width: auto;
+  }
+
   .quick-form {
     display: flex;
   }
 
   .quick-form :deep(.n-input),
   .quick-form .category-select,
+  .quick-form .nature-select,
   .quick-form .field-input,
   .quick-form .n-button {
     flex: 1 1 100%;

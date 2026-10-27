@@ -24,6 +24,12 @@ export const financeCategorySchema = z.enum([
 ])
 
 export const financeSourceSchema = z.enum(['manual', 'trip'])
+export const financeNatureSchema = z.enum([
+  'ESSENTIAL',
+  'IMPROVEMENT',
+  'HEDONIC',
+  'TRIP_SPECIAL',
+])
 
 export const financeEntrySchema = z
   .object({
@@ -32,6 +38,7 @@ export const financeEntrySchema = z
     date: financeDateSchema,
     amountFen: z.number().int().min(1, '金额必须大于 0'),
     category: financeCategorySchema,
+    natureTag: financeNatureSchema.default('IMPROVEMENT'),
     note: z.string().max(500).default(''),
     source: financeSourceSchema.default('manual'),
     sourceTripId: z.string().min(1).nullable().default(null),
@@ -55,12 +62,14 @@ export const financeEntrySchema = z
 
 export type FinanceCategory = z.infer<typeof financeCategorySchema>
 export type FinanceSource = z.infer<typeof financeSourceSchema>
+export type FinanceNature = z.infer<typeof financeNatureSchema>
 export type FinanceEntry = z.infer<typeof financeEntrySchema>
 
 export interface NewFinanceEntryInput {
   date: string
   amountFen: number
   category: FinanceCategory
+  natureTag?: FinanceNature
   note?: string
   source?: FinanceSource
   sourceTripId?: string | null
@@ -70,6 +79,7 @@ export interface NewFinanceEntryInput {
 export function newFinanceEntry(input: NewFinanceEntryInput, now = Date.now()): FinanceEntry {
   const id = nanoid(12)
   const source = input.source ?? 'manual'
+  const natureTag = input.natureTag ?? defaultNatureFor(input.category, source)
   const sourceKey =
     source === 'trip'
       ? `trip:${input.sourceTripId}:${input.sourceExpenseId}`
@@ -80,6 +90,7 @@ export function newFinanceEntry(input: NewFinanceEntryInput, now = Date.now()): 
     date: input.date,
     amountFen: input.amountFen,
     category: input.category,
+    natureTag,
     note: input.note ?? '',
     source,
     sourceTripId: source === 'trip' ? input.sourceTripId : null,
@@ -102,6 +113,20 @@ export const FINANCE_CATEGORY_LABELS: Record<FinanceCategory, string> = {
   entertainment: '娱乐',
   health: '健康',
   other: '其他',
+}
+
+export const FINANCE_NATURE_LABELS: Record<FinanceNature, string> = {
+  ESSENTIAL: '生存刚需',
+  IMPROVEMENT: '品质改善',
+  HEDONIC: '享受冲动',
+  TRIP_SPECIAL: '旅行专项',
+}
+
+export function defaultNatureFor(category: FinanceCategory, source: FinanceSource): FinanceNature {
+  if (source === 'trip') return 'TRIP_SPECIAL'
+  if (category === 'food' || category === 'transport' || category === 'stay') return 'ESSENTIAL'
+  if (category === 'shopping' || category === 'entertainment') return 'HEDONIC'
+  return 'IMPROVEMENT'
 }
 
 export function travelCategoryToFinance(category: string): FinanceCategory {

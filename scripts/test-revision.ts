@@ -10,8 +10,8 @@ import {
   decideSubmission,
   getTeam,
   saveTeam,
-} from '../src/db/teamActions'
-import { currentConfirmedQty } from '../src/team/domain'
+} from '../src/mods/mod-team/db/actions'
+import { currentConfirmedQty } from '../src/mods/mod-team/domain/domain'
 
 let failed = 0
 function check(name: string, cond: boolean) {

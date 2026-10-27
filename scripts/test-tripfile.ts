@@ -2,7 +2,7 @@
  * 阶段1/阶段13 验收：.trip 导入校验 + id 重建映射测试。
  * 运行：npx tsx scripts/test-tripfile.ts
  */
-import { readTripFile, TripImportError } from '../src/utils/tripFile'
+import { readTripFile, TripImportError } from '../src/mods/mod-trip/services/tripFile'
 import { regenerateAllIds } from '../src/utils/regenerateIds'
 import type { Trip } from '../src/schema/trip'
 

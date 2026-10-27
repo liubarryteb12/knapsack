@@ -1,7 +1,7 @@
 {
   "name": "knapsack",
   "private": true,
-  "version": "1.1.2",
+  "version": "1.3.0",
   "license": "MIT",
   "type": "module",
   "description": "本地优先的模块化个人生活系统",
@@ -16,7 +16,11 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
-    "audit:boundary": "tsx scripts/audit-release-boundaries.ts"
+    "pretest": "npm run mod:sync",
+    "test": "node scripts/run-regression.mjs",
+    "mod:sync": "node --import ./scripts/lib/tsx-preload.mjs --import tsx scripts/sync-mod-manifest-index.ts",
+    "audit:boundary": "node --import ./scripts/lib/tsx-preload.mjs --import tsx scripts/audit-release-boundaries.ts",
+    "audit:modules": "node --import ./scripts/lib/tsx-preload.mjs --import tsx scripts/audit-module-boundaries.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",

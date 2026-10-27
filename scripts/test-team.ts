@@ -10,15 +10,15 @@ import {
   digestOf,
   sharesValid,
   buildPublicSnapshot,
-} from '../src/team/domain'
-import { confirmKeyString, isConsistentKey } from '../src/team/protocol'
+} from '../src/mods/mod-team/domain/domain'
+import { confirmKeyString, isConsistentKey } from '../src/mods/mod-team/domain/protocol'
 import {
   submissionSchema,
   teamStateSchema,
   publicSnapshotSchema,
   type Submission,
   type TeamState,
-} from '../src/team/schema'
+} from '../src/mods/mod-team/domain/schema'
 
 let failed = 0
 function check(name: string, cond: boolean) {

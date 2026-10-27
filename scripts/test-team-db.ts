@@ -7,10 +7,10 @@
  * 以及 A01（旧 trips 数据升级保留）。
  */
 import 'fake-indexeddb/auto'
-import { digestOf } from '../src/team/domain'
+import { digestOf } from '../src/mods/mod-team/domain/domain'
 import { types as utilTypes } from 'node:util'
 import { KnapsackDB } from '../src/db/index'
-import { teamStateSchema, type TeamState } from '../src/team/schema'
+import { teamStateSchema, type TeamState } from '../src/mods/mod-team/domain/schema'
 
 let failed = 0
 function check(name: string, cond: boolean) {
@@ -55,10 +55,10 @@ import {
   acceptReceipt,
   getTeam,
   latestPublicationOf,
-} from '../src/db/teamActions'
+} from '../src/mods/mod-team/db/actions'
 import { db } from '../src/db'
-import { buildPublicSnapshot } from '../src/team/domain'
-import type { PublicSnapshot } from '../src/team/schema'
+import { buildPublicSnapshot } from '../src/mods/mod-team/domain/domain'
+import type { PublicSnapshot } from '../src/mods/mod-team/domain/schema'
 
 async function testA01() {
   console.log('A01 旧数据升级保留')
@@ -133,7 +133,7 @@ async function testA12_A13() {
   // 第二版：先推进 draftRevision
   const t2 = await getTeam(teamId)
   t2!.draftRevision = 2
-  const { saveTeam } = await import('../src/db/teamActions')
+  const { saveTeam } = await import('../src/mods/mod-team/db/actions')
   await saveTeam(t2!)
   const r4 = await publishSnapshot({
     teamId,
@@ -155,7 +155,7 @@ async function testSubmissionReceipt() {
   const teamId = team.teamId
   const organizer = team.roster[0].memberId
   // createTeam 只建 organizer；报告作者补一名成员进名册
-  const { saveTeam } = await import('../src/db/teamActions')
+  const { saveTeam } = await import('../src/mods/mod-team/db/actions')
   team.roster.push({ memberId: 'm2', name: '乙', role: 'member', joinedAt: 2 })
   await saveTeam(team)
   const member = 'm2'
@@ -264,7 +264,7 @@ async function testSubmissionReceipt() {
 
 async function testExpenseLedger() {
   console.log('费用入账（A09/A11）')
-  const { createTeam, acceptSubmission, decideSubmission, getTeam, saveTeam } = await import('../src/db/teamActions')
+  const { createTeam, acceptSubmission, decideSubmission, getTeam, saveTeam } = await import('../src/mods/mod-team/db/actions')
   const team = await createTeam({ name: '费用团', organizerName: '甲' })
   const teamId = team.teamId
   const organizer = team.roster[0].memberId
@@ -346,8 +346,8 @@ function impurity(value: unknown, path = '$'): string[] {
 async function testA34ProxyToPlain() {
   console.log('A34 回归：Proxy 入参不再触发 DataCloneError')
   const { db } = await import('../src/db/index')
-  const actions = await import('../src/db/teamActions')
-  const { buildPublicSnapshot } = await import('../src/team/domain')
+  const actions = await import('../src/mods/mod-team/db/actions')
+  const { buildPublicSnapshot } = await import('../src/mods/mod-team/domain/domain')
 
   // 0) 前提：本运行时的 structuredClone 拒绝 Proxy（浏览器 IndexedDB 的克隆同源行为）
   let cloneErr = ''
@@ -485,11 +485,11 @@ async function testA34ProxyToPlain() {
 
 async function testConfirmKeyUniqueness() {
   console.log('逻辑键唯一（SPEC 3.3 / A06）')
-  const { createTeam, acceptSubmission, decideSubmission, getTeam } = await import('../src/db/teamActions')
-  const { currentConfirmedQty } = await import('../src/team/domain')
-  const { confirmKeyString } = await import('../src/team/protocol')
+  const { createTeam, acceptSubmission, decideSubmission, getTeam } = await import('../src/mods/mod-team/db/actions')
+  const { currentConfirmedQty } = await import('../src/mods/mod-team/domain/domain')
+  const { confirmKeyString } = await import('../src/mods/mod-team/domain/protocol')
 
-  const { saveTeam } = await import('../src/db/teamActions')
+  const { saveTeam } = await import('../src/mods/mod-team/db/actions')
   const base = await createTeam({ name: '逻辑键团', organizerName: '甲' })
   // 造一个真实存在的物资与批次 a1（否则报告会指向不存在的分配）
   const team = await saveTeam({
@@ -535,7 +535,7 @@ async function testConfirmKeyUniqueness() {
   check('同一逻辑键只剩一条 confirmed（SPEC 3.3 替换语义）', stillConfirmed.length === 1)
   check('被取代的 K1 标记为 stale', after2!.submissions.find((s) => s.submissionId === 'K1')!.review === 'stale')
   check('当前确认量确定为 24（不随 reviewedAt/顺序漂移）', currentConfirmedQty(after2!.submissions).get(key)?.qty === 24)
-  const { buildPublicSnapshot } = await import('../src/team/domain')
+  const { buildPublicSnapshot } = await import('../src/mods/mod-team/domain/domain')
   const snap = buildPublicSnapshot(after2!, 'p', 1, 1)
   const alloc = snap.items.flatMap((it) => it.allocations).find((a) => a.allocationId === 'a1')
   check('快照存在该批次', alloc !== undefined)
@@ -570,9 +570,9 @@ async function testConfirmKeyUniqueness() {
 
 async function testStaleOnDraftBump() {
   console.log('分工更新标记 stale（A08）')
-  const { createTeam, acceptSubmission, decideSubmission, saveTeam, getTeam } = await import('../src/db/teamActions')
-  const { currentConfirmedQty } = await import('../src/team/domain')
-  const { confirmKeyString } = await import('../src/team/protocol')
+  const { createTeam, acceptSubmission, decideSubmission, saveTeam, getTeam } = await import('../src/mods/mod-team/db/actions')
+  const { currentConfirmedQty } = await import('../src/mods/mod-team/domain/domain')
+  const { confirmKeyString } = await import('../src/mods/mod-team/domain/protocol')
 
   const team = await createTeam({ name: '过期报告团', organizerName: '甲' })
   const org = team.roster.find((m) => m.role === 'organizer')!.memberId
@@ -611,7 +611,7 @@ async function testStaleOnDraftBump() {
 
 async function testExpenseReportIdOwnership() {
   console.log('费用来源编号独占（SPEC 3.5 / A15）')
-  const { createTeam, saveTeam, acceptSubmission, decideSubmission, getTeam } = await import('../src/db/teamActions')
+  const { createTeam, saveTeam, acceptSubmission, decideSubmission, getTeam } = await import('../src/mods/mod-team/db/actions')
 
   const base = await createTeam({ name: '独占团', organizerName: '甲' })
   const team = await saveTeam({
@@ -666,7 +666,7 @@ async function testExpenseReportIdOwnership() {
 
 async function testExpenseMemberValidation() {
   console.log('费用入账成员校验（SPEC 3.5）')
-  const { createTeam, acceptSubmission, decideSubmission, getTeam } = await import('../src/db/teamActions')
+  const { createTeam, acceptSubmission, decideSubmission, getTeam } = await import('../src/mods/mod-team/db/actions')
 
   const team = await createTeam({ name: '成员校验团', organizerName: '甲' })
   const org = team.roster.find((m) => m.role === 'organizer')!.memberId
@@ -713,7 +713,7 @@ async function testExpenseMemberValidation() {
 
 async function testExpenseWithoutAllocation() {
   console.log('无批次费用（SPEC 3.5）')
-  const { createTeam, acceptSubmission, decideSubmission, getTeam } = await import('../src/db/teamActions')
+  const { createTeam, acceptSubmission, decideSubmission, getTeam } = await import('../src/mods/mod-team/db/actions')
 
   const team = await createTeam({ name: '无批次费用团', organizerName: '甲' })
   const author = team.roster[0]!.memberId
@@ -757,7 +757,7 @@ async function testExpenseWithoutAllocation() {
 
 async function testTeamListProjection() {
   console.log('团队列表投影（内存优化）')
-  const { createTeam, saveTeam, listTeamSummaries, deleteTeam } = await import('../src/db/teamActions')
+  const { createTeam, saveTeam, listTeamSummaries, deleteTeam } = await import('../src/mods/mod-team/db/actions')
 
   const base = await createTeam({ name: '投影团', organizerName: '甲' })
   const team = await saveTeam({
@@ -852,7 +852,7 @@ async function testP0Regressions() {
 
   // (1) 同一 operationId 并发发布 -> 只发一版
   {
-    const { createTeam, publishSnapshot, getTeam } = await import('../src/db/teamActions')
+    const { createTeam, publishSnapshot, getTeam } = await import('../src/mods/mod-team/db/actions')
     const t = await createTeam({ name: '并发团', organizerName: '甲' })
     const org = t.roster.find((m) => m.role === 'organizer')!.memberId
     const opId = 'concurrent-op'
@@ -867,7 +867,7 @@ async function testP0Regressions() {
 
   // (2) 畸形载荷不得毒化聚合根
   {
-    const { createTeam, acceptSubmission, getTeam } = await import('../src/db/teamActions')
+    const { createTeam, acceptSubmission, getTeam } = await import('../src/mods/mod-team/db/actions')
     const t = await createTeam({ name: '毒化团', organizerName: '甲' })
     const org = t.roster.find((m) => m.role === 'organizer')!.memberId
     const bad = await acceptSubmission({
@@ -887,7 +887,7 @@ async function testP0Regressions() {
 
   // (3) 依据旧版分工的报告 -> stale，不进待审核
   {
-    const { createTeam, saveTeam, acceptSubmission, getTeam } = await import('../src/db/teamActions')
+    const { createTeam, saveTeam, acceptSubmission, getTeam } = await import('../src/mods/mod-team/db/actions')
     const base = await createTeam({ name: '旧版团', organizerName: '甲' })
     const org = base.roster.find((m) => m.role === 'organizer')!.memberId
     const t = await saveTeam({ ...base, draftRevision: 5 })
@@ -908,7 +908,7 @@ async function testP0Regressions() {
 
   // (4) 假回执被拒
   {
-    const { createTeam, acceptReceipt } = await import('../src/db/teamActions')
+    const { createTeam, acceptReceipt } = await import('../src/mods/mod-team/db/actions')
     const t = await createTeam({ name: '假回执团', organizerName: '甲' })
     const r = await acceptReceipt({
       teamId: t.teamId, memberId: 'm2', operationId: 'fake-receipt',
@@ -919,8 +919,8 @@ async function testP0Regressions() {
 
   // (5) 假摘要快照被拒
   {
-    const { createTeam, ingestPublication } = await import('../src/db/teamActions')
-    const { publicSnapshotSchema } = await import('../src/team/schema')
+    const { createTeam, ingestPublication } = await import('../src/mods/mod-team/db/actions')
+    const { publicSnapshotSchema } = await import('../src/mods/mod-team/domain/schema')
     const t = await createTeam({ name: '假摘要团', organizerName: '甲' })
     const snap = publicSnapshotSchema.parse({
       format: 'team-publication.v1', teamId: t.teamId, publicationId: 'P1', version: 1,
@@ -938,7 +938,7 @@ async function testP0Regressions() {
 
 async function testSaveTeamConcurrency() {
   console.log('saveTeam 并发守卫')
-  const { createTeam, saveTeam, getTeam, acceptSubmission } = await import('../src/db/teamActions')
+  const { createTeam, saveTeam, getTeam, acceptSubmission } = await import('../src/mods/mod-team/db/actions')
 
   const t = await createTeam({ name: '并发保存团', organizerName: '甲' })
   const org = t.roster.find((m) => m.role === 'organizer')!.memberId
@@ -974,8 +974,8 @@ async function testSaveTeamConcurrency() {
 
 async function testOrganizerOnSite() {
   console.log('组织者当面操作（dispatchAction 层）')
-  const { createTeam, saveTeam, acceptSubmission, approveJoin, registerJoinRequest } = await import('../src/db/teamActions')
-  const { issueCredential, toB64u, generateCredentialSecret } = await import('../src/team/identity')
+  const { createTeam, saveTeam, acceptSubmission, approveJoin, registerJoinRequest } = await import('../src/mods/mod-team/db/actions')
+  const { issueCredential, toB64u, generateCredentialSecret } = await import('../src/mods/mod-team/domain/identity')
 
   // 模拟主机本地分发：直接驱动 dispatchAction 不可行（内部函数），用同层逻辑测试授权结果。
   // 这里验证的是组织者动作所依赖的授权事实与动作语义。
@@ -1005,7 +1005,7 @@ async function testOrganizerOnSite() {
     teamId: t.teamId, organizerMemberId: org, joinRequestId: 'jr-remote',
   })
   check('组织者可当面审批加入', ap.ok)
-  check('新成员已进名册', ap.ok && (await (await import('../src/db/teamActions')).getTeam(t.teamId))!.roster.length === 2)
+  check('新成员已进名册', ap.ok && (await (await import('../src/mods/mod-team/db/actions')).getTeam(t.teamId))!.roster.length === 2)
 
   // 凭证签发与角色解析：组织者授权的根基
   const secret = generateCredentialSecret()
@@ -1013,7 +1013,7 @@ async function testOrganizerOnSite() {
   check('签发的凭证可验证', cred.length > 0)
 
   // organizer.state 不泄漏凭证密钥（hostService 层置 null）
-  const { getTeam } = await import('../src/db/teamActions')
+  const { getTeam } = await import('../src/mods/mod-team/db/actions')
   const state = await getTeam(t.teamId)
   check('主机状态含 credentialSecret（本机）', !!state!.credentialSecret)
 }
@@ -1024,7 +1024,7 @@ async function testAuditFixes() {
 
   // (1) 并发同 operationId 提交报告 → 只收一条（事务内幂等）
   {
-    const { createTeam, acceptSubmission, getTeam } = await import('../src/db/teamActions')
+    const { createTeam, acceptSubmission, getTeam } = await import('../src/mods/mod-team/db/actions')
     const t = await createTeam({ name: '并发提交团', organizerName: '甲' })
     const org = t.roster.find((m) => m.role === 'organizer')!.memberId
     const draft = {
@@ -1044,9 +1044,9 @@ async function testAuditFixes() {
 
   // (2) 修订保留旧版本：旧确认继续算数，新版待审
   {
-    const { createTeam, saveTeam, acceptSubmission, getTeam } = await import('../src/db/teamActions')
-    const { currentConfirmedQty } = await import('../src/team/domain')
-    const { confirmKeyString } = await import('../src/team/protocol')
+    const { createTeam, saveTeam, acceptSubmission, getTeam } = await import('../src/mods/mod-team/db/actions')
+    const { currentConfirmedQty } = await import('../src/mods/mod-team/domain/domain')
+    const { confirmKeyString } = await import('../src/mods/mod-team/domain/protocol')
     const base = await createTeam({ name: '修订历史团', organizerName: '甲' })
     const org = base.roster.find((m) => m.role === 'organizer')!.memberId
     const t = await saveTeam({
@@ -1062,7 +1062,7 @@ async function testAuditFixes() {
     })
     // r1 提交并确认 20
     await acceptSubmission({ teamId: t.teamId, authorMemberId: org, operationId: 'h-1', draft: mk('H1', 1, 20) })
-    const { decideSubmission } = await import('../src/db/teamActions')
+    const { decideSubmission } = await import('../src/mods/mod-team/db/actions')
     await decideSubmission({ teamId: t.teamId, organizerMemberId: org, operationId: 'h-d1', submissionId: 'H1', revision: 1, decision: 'confirmed' })
     const k = confirmKeyString({ allocationId: 'a1', stage: 'purchase', checkpointId: null })
     let cur = await getTeam(t.teamId)
@@ -1086,7 +1086,7 @@ async function testAuditFixes() {
 
   // (3) 并发同 operationId 确认 → 幂等
   {
-    const { createTeam, saveTeam, acceptSubmission, decideSubmission, getTeam } = await import('../src/db/teamActions')
+    const { createTeam, saveTeam, acceptSubmission, decideSubmission, getTeam } = await import('../src/mods/mod-team/db/actions')
     const base = await createTeam({ name: '并发确认团', organizerName: '甲' })
     const org = base.roster.find((m) => m.role === 'organizer')!.memberId
     const t = await saveTeam({

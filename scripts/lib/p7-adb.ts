@@ -11,9 +11,11 @@ import { dirname } from 'node:path'
 
 export const PKG = 'com.liubarryteb12.knapsack'
 export const MAIN_ACTIVITY = PKG + '/.MainActivity'
-export const DEFAULT_DEVICE = '3a3e1f52'
+// 当前真机基线为 Redmi K20 Pro；可用 P7_DEVICE 临时覆盖。
+export const DEFAULT_DEVICE = '69b31964'
 export const APP_FILES_DIR = '/data/user/0/' + PKG + '/files'
 export const APP_CACHE_DIR = '/data/user/0/' + PKG + '/cache'
+let activeSerial: string | null = null
 
 export interface RunResult {
   code: number
@@ -25,12 +27,19 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
 }
 
+function withDevice(args: string[]): string[] {
+  const hasSelector = args.some((arg) => arg === '-s' || arg === '-d' || arg === '-e' || arg === '-t')
+  return activeSerial && !hasSelector ? ['-s', activeSerial, ...args] : args
+}
+
 /** 执行 adb，返回退出码与输出，不抛错 */
 export function adbTry(
   args: string[],
-  opts: { input?: string; timeoutMs?: number } = {},
+  opts: { input?: string; timeoutMs?: number; device?: string | false } = {},
 ): RunResult {
-  const res = spawnSync('adb', args, {
+  const finalArgs =
+    opts.device === false ? args : opts.device ? ['-s', opts.device, ...args] : withDevice(args)
+  const res = spawnSync('adb', finalArgs, {
     encoding: 'utf8',
     input: opts.input,
     timeout: opts.timeoutMs ?? 60_000,
@@ -48,7 +57,9 @@ export function adbTry(
 export function adb(args: string[], opts: { input?: string; timeoutMs?: number } = {}): string {
   const r = adbTry(args, opts)
   if (r.code !== 0) {
-    throw new Error('adb ' + args.join(' ') + ' 失败(exit ' + r.code + ')：' + (r.stderr.trim() || r.stdout.trim()))
+    throw new Error(
+      'adb ' + withDevice(args).join(' ') + ' 失败(exit ' + r.code + ')：' + (r.stderr.trim() || r.stdout.trim()),
+    )
   }
   return r.stdout
 }
@@ -72,7 +83,7 @@ function prop(name: string): string {
 
 /** 确认目标设备在线；返回序列号 */
 export function ensureDevice(preferred?: string): string {
-  const out = adbTry(['devices']).stdout
+  const out = adbTry(['devices'], { device: false }).stdout
   const serials = out
     .split(/\r?\n/)
     .slice(1)
@@ -81,12 +92,15 @@ export function ensureDevice(preferred?: string): string {
     .map((p) => p[0])
   if (serials.length === 0) throw new Error('没有在线 Android 设备（adb devices 为空）')
   const want = preferred || process.env.P7_DEVICE || ''
-  if (want && serials.includes(want)) return want
+  if (want && serials.includes(want)) {
+    activeSerial = want
+    return want
+  }
   if (want && !serials.includes(want)) {
     throw new Error('指定设备 ' + want + ' 不在线；当前在线：' + serials.join(','))
   }
-  if (serials.length > 1 && serials.includes(DEFAULT_DEVICE)) return DEFAULT_DEVICE
-  return serials[0]
+  activeSerial = serials.length > 1 && serials.includes(DEFAULT_DEVICE) ? DEFAULT_DEVICE : serials[0]
+  return activeSerial
 }
 
 export function deviceInfo(): DeviceInfo {
@@ -163,7 +177,10 @@ export function forwardCdp(): { socket: string } {
 /** 设备截图（先试 exec-out，失败回退 shell + pull），返回写入的路径 */
 export function screencapTo(path: string): string {
   mkdirSync(dirname(path), { recursive: true })
-  const res = spawnSync('adb', ['exec-out', 'screencap', '-p'], { timeout: 60_000, maxBuffer: 64 * 1024 * 1024 })
+  const res = spawnSync('adb', withDevice(['exec-out', 'screencap', '-p']), {
+    timeout: 60_000,
+    maxBuffer: 64 * 1024 * 1024,
+  })
   const buf = res.stdout
   if (res.status === 0 && buf && buf.length > 100 && buf[0] === 0x89 && buf[1] === 0x50) {
     writeFileSync(path, buf)

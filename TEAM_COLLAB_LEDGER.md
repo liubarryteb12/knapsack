@@ -1,7 +1,8 @@
 # 团队筹备与汇总：实施台账
 
 文档日期：2026-10-07（2026-10-08 更新）  
-当前阶段：P0/P1 已完成；P2–P5 代码与单元/真机链路测试完成，待真机端到端验收；P6 文件兜底代码完成，真机保存/分享通过；P7 单机验收已执行（A22/A28/A30/A35/E19 通过，A34 已定位根因并修复，待最终包复验）；2026-10-21 另完成 R15 清理与「闪退」根因修复（WebView 渲染进程死亡自愈 + 主机插件线程安全），三设备现场样例仍未做。  
+当前阶段：P0/P1 已完成；P2–P5 代码与单元/真机链路测试完成，待真机端到端验收；P6 文件兜底代码完成，真机保存/分享通过；P7 单机验收已执行（A22/A28/A30/A35/E19 通过，A34 系统文件选择器仍需人工验收）；2026-10-21 另完成 R15 清理与「闪退」根因修复（WebView 渲染进程死亡自愈 + 主机插件线程安全）；2026-10-25 红米 K20 Pro 已接入为默认真机测试机，三设备现场样例仍未做。
+2026-10-27 补充：团队协作代码已从旅行模块迁入独立 `src/mods/mod-team/`，团队包收发使用 `ShareablePackage` 与 `CapabilityBus`，旧团队域路径仅保留兼容 facade。原台账中的旅行内团队路径引用仅作历史记录。当日 v1.3.0 已构建并安装到 Windows 与两台 Android 设备。
 约定：规格看 TEAM_COLLAB_SPEC.md，施工和验收看 TEAM_COLLAB_PLAN.md，本文件只记录实际状态、决策、证据和问题。
 
 ## 1. 当前基线
@@ -173,6 +174,7 @@
 | E33 | 2026-10-22 | 手机=算力端架构：组织者远程操作 | `npx vue-tsc --noEmit` 退出码 0；`npm run build` 退出码 0；7 个测试脚本全量回归全部退出码 0（新增 testOrganizerRemote 5 条断言） | 修复前：确认/审批/发布只能在主机设备本机做，手机必须随身。修复后：organizer.* 五个远程动作，组织者凭证接入任意主机即可操作；成员冒充 organizer.* 被 role 检查拒绝；状态下发剥离 credentialSecret | src/team/teamProtocol.ts、src/team/teamHostService.ts、src/team/teamClient.ts、src/components/team/TeamMemberTab.vue、scripts/test-team-db.ts || 2026-10-07 | 文档交接 | TEAM_COLLAB_SPEC.md | 需求、数据流、安全/兼容边界 | 全部定义 | 文档已写 |
 | E34 | 2026-10-22 | 四项收尾：远程审批/发布 UI、SPEC 回写、费用分摊、withdraw+业务日志 | `npx vue-tsc --noEmit` 退出码 0；`npm run build` 退出码 0；7 个测试脚本全量回归全部退出码 0；行为探针验证：撤回（withdrawn/幂等/不可再确认/不可再撤）、业务日志 5 类动作全落（withdraw/approve/rebind/reject/publish），日志不含凭证密钥 | 见变更登记 E34 各行 | src/components/team/TeamMemberTab.vue、src/team/schema.ts、src/team/teamProtocol.ts、src/team/teamHostService.ts、src/team/teamClient.ts、src/db/teamActions.ts、TEAM_COLLAB_SPEC.md || 2026-10-07 | 文档交接 | TEAM_COLLAB_PLAN.md | P0–P7计划、35项验收、命令与样例 | 全部定义 | 文档已写 |
 | E35 | 2026-10-22 | 真机 UI 验证（含发现并修复路由复用缺陷） | 设备 3a3e1f52（小米 M2012K11AC / Android 13 / WebView 116）；新 APK（20:30 构建 + watch 修复后重建）；CDP 驱动脚本注入 fixture 后断言 6 项全过（org 待审批加入显示、成员端本机版本/任务/上报入口、旅行列表、新建表单预算字段、设置页），截图留证 scripts/out/ui-verify/；**过程中发现真 bug**：TeamDetailView 只在 onMounted 加载数据，同组件复用切换 teamId（org 详情→mem 详情）时页面残留「找不到这个团队」——修复为 watch teamId 触发 refresh；修复后 6/6 通过 | src/views/TeamDetailView.vue、scripts/out/ui-verify/ || 2026-10-07 | 文档交接 | TEAM_COLLAB_LEDGER.md | 进度、决策、风险和证据台账 | 跟踪用途 | 文档已写 |
+| E36 | 2026-10-25 | 红米 K20 Pro 接入为默认真机测试机 | 设备 69b31964（Redmi K20 Pro Premium Edition / Android 11 / WebView 138.0.7204.179）；安装 v1.1.2 release 与 debug；修复 P7 双设备 ADB 绑定、A28 发布说明测试桩、A22 AAD 测试格式、A34「更多」菜单与 Naive UI 下拉点击；执行 `npx --no-install tsx scripts/p7-device-single.ts --only=A28,A22,A30,A35,E19 --out=reports/device-smoke/k20-p7` | 合并回归 5/5 通过：A28 重启持久化、A22 会话恢复与密钥隔离、A30 离线诚实性、A35 小屏/主题/草稿保护、E19 三轮启动竞态均通过；A34 自动文件落盘与读回通过，系统文件选择器在 WebView 138 上无法稳定自动注入，保留人工验收 | reports/device-smoke/k20-p7/p7-single-evidence-2026-10-25T15-58-21.json |
 | 2026-10-07 | 文档补充复核 | TEAM_COLLAB_SPEC.md | 登记此前已补齐的六项歧义处理，定位见下表；本轮只读，未修改SPEC | 见下表 | 仅文档核对，未实现/未验收 |
 | 2026-10-07 | 文档一致性修正 | TEAM_COLLAB_PLAN.md | A14改为「不处理，不返回成功ACK」；A13改为发布提交成功但响应丢失，避免混淆领取回执 | A13、A14 | 文档已修正，未执行验收 |
 | 2026-10-07 | 文档一致性登记 | TEAM_COLLAB_LEDGER.md | 登记E01、六项补充与对应工序/验收，更新相关备注；保留全部未开始/未执行状态 | 跟踪用途 | 文档已更新，非功能证据 |
@@ -290,3 +292,15 @@
 | 待用户决策的范围变更 | 无 |
 | 下一步唯一优先动作 | P6 收尾 + P7：手测系统「选择文件」真实往返（导出→分享/保存→选择导入）与旧 trip/局域网真机回归；随后按 PLAN 第 5 节做三设备现场样例（甲主机/乙采购/丙携带，水 24 瓶，私人标记串 `PRIVATE-NOTE-DO-NOT-SHARE`），并把 A22/A28/A30/A34/A35 结果登记回本台账 |
 | 依赖条件 | 需 1 台 Android 主机 + 至少 2 台成员设备（同 Wi‑Fi 或热点）；Android 构建需 JDK 21（`.jdk21/`，见 D18） |
+
+### 8.3 红米 K20 Pro 真机测试基线（2026-10-25）
+
+| 项 | 内容 |
+| --- | --- |
+| 默认设备 | `69b31964`，Redmi K20 Pro Premium Edition，Android 11，WebView 138.0.7204.179 |
+| 应用版本 | Knapsack `1.1.2`，versionCode `4`，debug 构建用于 CDP 自动化 |
+| 已通过用例 | A28、A22、A30、A35、E19，合并回归退出码 `0` |
+| 无法自动化 | A34 系统文件选择器。文件落盘、读回、应用保存、Share 能力与 File.text() 回退均通过；系统选择器按人工步骤验收 |
+| 基础设施修复 | P7 ADB 层在双设备环境自动绑定 `-s`；A28 使用不同发布说明制造合法第 2 版；A22 AAD 与当前 6 段格式对齐；A34 适配「更多」菜单并支持 `.n-dropdown-option` |
+| 当前工作区 | README、P7 脚本与测试台账已修改；证据位于 `reports/device-smoke/k20-p7/`；未 commit、未 push |
+| 下一步 | 人工完成 A34 系统选择器往返，再进入三设备现场样例 |

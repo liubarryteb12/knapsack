@@ -1,29 +1,61 @@
 import Dexie, { type Table } from 'dexie'
-import type { Trip } from '../schema/trip'
-import type { DailyDay } from '../mods/mod-daily/schema'
-import type { FinanceEntry } from '../mods/mod-finance/schema'
+import { MOD_MANIFESTS } from '../core/bootMods'
+import {
+  buildModDbSchema,
+  copyLegacyModStores,
+  deriveModDbVersion,
+} from '../core/sandboxedDb'
 
-/** IndexedDB 封装：v1 trips，v2 团队表，v3 日常规划表，v4 日常账房表 */
+/**
+ * IndexedDB host.
+ *
+ * Existing v1-v4 stores stay available during expand-contract. Manifest-declared
+ * mod_* stores are created automatically and receive a one-time legacy mirror.
+ * New modules use db.table('mod_...') without editing this class.
+ */
 export class KnapsackDB extends Dexie {
-  trips!: Table<Trip, string>
-  /** v2 起可用：团队聚合根 */
-  teamState!: Table<import('../team/schema').TeamState, string>
-  teamPublications!: Table<import('../db/teamSchema').TeamPublicationRow, string>
-  teamOutbox!: Table<import('../db/teamSchema').TeamOutboxEntry, string>
-  teamIdempotency!: Table<import('../db/teamSchema').TeamIdempotencyRecord, string>
-  teamLink!: Table<import('../db/teamSchema').TeamLink, string>
-  /** v3 起可用：按日期存一条日常规划 */
-  dailyDays!: Table<DailyDay, string>
-  /** v4 起可用：本地账目 */
-  financeEntries!: Table<FinanceEntry, string>
+  get trips(): Table<any, string> {
+    return this.table('mod_trip_trips')
+  }
 
-  constructor() {
-    super('knapsack')
+  get teamState(): Table<any, string> {
+    return this.table('mod_team_groups')
+  }
+
+  get teamPublications(): Table<any, string> {
+    return this.table('mod_team_publications')
+  }
+
+  get teamOutbox(): Table<any, string> {
+    return this.table('mod_team_outbox')
+  }
+
+  get teamIdempotency(): Table<any, string> {
+    return this.table('mod_team_idempotency')
+  }
+
+  get teamLink(): Table<any, string> {
+    return this.table('mod_team_link')
+  }
+
+  get teamPackages(): Table<any, string> {
+    return this.table('mod_team_packages')
+  }
+
+  get dailyDays(): Table<any, string> {
+    return this.table('mod_daily_days')
+  }
+
+  get financeEntries(): Table<any, string> {
+    return this.table('mod_finance_entries')
+  }
+
+  constructor(name = 'knapsack', manifests = MOD_MANIFESTS) {
+    super(name)
     this.version(1).stores({
       trips: 'id, name, startDate',
     })
     this.version(2).stores({
-      // trips 保持原样；新增团队表，不影响旧数据
       trips: 'id, name, startDate',
       teamState: 'teamId',
       teamPublications: 'publicationId, teamId, [teamId+version]',
@@ -50,6 +82,9 @@ export class KnapsackDB extends Dexie {
       dailyDays: 'date, updatedAt',
       financeEntries: 'id, date, category, &sourceKey, [date+category]',
     })
+    this.version(deriveModDbVersion(manifests))
+      .stores(buildModDbSchema(manifests))
+      .upgrade((tx) => copyLegacyModStores(tx, manifests))
   }
 }
 

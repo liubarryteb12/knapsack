@@ -16,7 +16,7 @@ import { Recorder, requireTrue, nowIso, clip } from './lib/p7-report'
 import { openApp, readState, teamSnapshot, resetAndInject, gotoTeam, screenshotTo, sleep, isMain } from './lib/p7-run'
 import { memFixture, MEM_TEAM_ID, YI } from './lib/p7-fixtures'
 import { PAGE_LIB, TOASTS_EXPR, writeFileExpr, SHARE_CAN_EXPR, ENSURE_FILE_INPUT_EXPR, READ_FILE_INPUT_EXPR } from './lib/p7-page'
-import { checkPublicImport, parsePublicFile } from '../src/team/teamFile'
+import { checkPublicImport, parsePublicFile } from '../src/mods/mod-team/domain/teamFile'
 
 const TITLE_AUTO = '文件落盘/读回 + 应用导入路径（不含系统选择器 UI）'
 const TITLE = 'Android 保存/分享/选择真实往返（系统选择器需人工点击）'
@@ -107,16 +107,27 @@ export async function runA34(rec: Recorder, outDir: string): Promise<void> {
 
     let appImportPathExercised = false
     if (intercepted) {
-      const clicked = await cdp.clickText('导入文件')
-      requireTrue(clicked, '找不到「导入文件」按钮')
-      await sleep(1200)
+      const moreOpened = await cdp.clickText('更多')
+      requireTrue(moreOpened, '找不到「更多」菜单按钮')
+      await cdp.evalRaw(
+        "(() => { window.__p7FileInput = null; window.__p7OriginalInputClick = HTMLInputElement.prototype.click; HTMLInputElement.prototype.click = function () { if (this.type === 'file') { window.__p7FileInput = this; return; } return window.__p7OriginalInputClick.apply(this, arguments); }; return true; })()",
+      )
+      const clicked = await cdp.clickText('导入公共资料文件')
+      requireTrue(clicked, '找不到「导入公共资料文件」菜单项')
+      await sleep(500)
       let setOk = false
       for (let i = 0; i < 10 && !setOk; i++) {
         setOk = await cdp.setFileInput('input[type="file"]', [DEVICE_IMPORT_PATH]).catch(() => false)
         if (!setOk) await sleep(400)
       }
       ev.setFileInput = setOk
+      await cdp.evalRaw(
+        "(() => { if (window.__p7OriginalInputClick) HTMLInputElement.prototype.click = window.__p7OriginalInputClick; delete window.__p7OriginalInputClick; return true; })()",
+      )
       if (setOk) {
+        ev.changeDispatched = await cdp.evalRaw(
+          "(() => { const el = document.querySelector('input[type=file]') || window.__p7FileInput; if (!el) return false; el.dispatchEvent(new Event('change', { bubbles: true })); return true; })()",
+        )
         const previewOk = await cdp.waitForText('导入公共资料文件', 12_000)
         ev.previewShown = previewOk
         if (previewOk) {
@@ -228,7 +239,7 @@ export async function runA34(rec: Recorder, outDir: string): Promise<void> {
     rec.blocked('A34', TITLE, '系统「选择文件」需要人工在设备屏幕上点选真实文件，脚本无法代替；本项不判定通过', {
       autoPart: autoOk ? '通过（见 A34-自动）' : '未通过（见 A34-自动）',
       manualSteps: [
-        '在设备上打开团队（成员）→ 领取公共版本 → 点「导入文件」→ 系统选择器里选一个真实 .team-public 文件 → 核对预览（来源文件/版本/校验和/对比）→ 点「导入」；',
+        '在设备上打开团队（成员）→ 领取公共版本 → 我的任务「更多」→「导入公共资料文件」→ 系统选择器里选一个真实 .team-public 文件 → 核对预览（来源文件/版本/校验和/对比）→ 点「导入」；',
         '再点「导出资料文件」→ 系统分享面板 → 存到「文件」→ 用文件管理器确认文件存在并能再次导入。',
       ],
     })

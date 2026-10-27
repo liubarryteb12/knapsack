@@ -1,13 +1,17 @@
 # 行囊 Knapsack
 
-本地优先的模块化个人生活系统。当前包含旅行、日常规划与日常账房模块，数据 100% 存本地（IndexedDB），无账号、无云端服务器、无遥测、无云同步。
+本地优先的模块化个人生活系统。当前包含旅行、日常规划、日常账房、提示词库与团队分享模块，数据 100% 存本地（IndexedDB），无账号、无云端服务器、无遥测、无云同步。
 
 核心气质：轻量。统一条目模型、整数分记账、`.trip` 单文件交换格式。
+
+完整操作说明见 [用户使用教程](docs/USER_GUIDE.md)。
 
 ## 当前功能
 
 - 日常规划：按日期管理任务与时间块、完成状态、随手备忘录自动保存、每日三问复盘；模块可在设置中独立开关
 - 日常账房：本地花费快速记录、月度合计、近 7 日趋势、分类消费结构；可选择性导入旅行花费并自动去重，不修改旅行账本
+- 提示词库：工作、生图、生视频三态提示词，变量 Runner、词块字典、四维筛选、缩略图与全局速存
+- 团队分享：独立团队工作台、跨模块标准包、只读/协同权限、分片二维码、版本 Diff 与受控合入
 - 旅行管理：新建/复制/删除/导出导入 `.trip` 文件（导入前强制校验，覆盖或另存二选一）
 - 行程时间轴：按天组织，条目含时间/类型/标题/备注/完成勾选，支持天内拖拽排序与跨天移动，撤销栈 50 步
 - 预算与花费：总预算 + 分类预算（交通/住宿/餐饮/游玩/其他分项额度与已用进度）、花费记录（付款人 + 均分/按份/自定义三种分摊）、结算建议（净额贪心算法）、花费合并导入（按 id 去重）、预算单独导入（只读文件预算字段，覆盖前确认）
@@ -24,7 +28,7 @@
 
 - 数据默认 100% 在本机 IndexedDB；无账号、无云同步、无遥测、无支付/转账/银行卡接口。
 - 可选 AI 会访问用户配置的 OpenAI 兼容接口；可选天气会访问 Open-Meteo；局域网会话只连接同一 WiFi 内的用户设备。
-- 发布门禁与已知问题见 `docs/RELEASE_GATE_v1.1.2.md`、`docs/RELEASE_NOTES_v1.1.2.md`、`docs/KNOWN_ISSUES_v1.1.2.md`。
+- 发布门禁与已知问题见 `docs/RELEASE_GATE_v1.3.0.md`、`docs/RELEASE_NOTES_v1.3.0.md`、`docs/KNOWN_ISSUES_v1.3.0.md`。
 - 发布前运行 `npm run audit:boundary`，检查权限、CSP、依赖和网络调用点。
 
 ## 安装与运行
@@ -87,7 +91,7 @@ npm run build    # 类型检查 + 产物构建
 
 硬规则：
 
-- Zod Schema（`src/schema/trip.ts`）是唯一事实源：内部写入、文件导入、AI 返回结果全部先过校验
+- Zod Schema（`src/mods/mod-trip/schema.ts`）是唯一事实源：内部写入、文件导入、AI 返回结果全部先过校验
 - 金额一律整数分存储，界面输入元、展示时除以 100，禁止任何浮点金额运算
 - 所有 id 用 nanoid 生成；日期 `yyyy-MM-dd`，时间 `HH:mm`
 - 导入失败给人话错误提示，绝不静默写入；结算建议不落盘，每次现算
@@ -95,10 +99,10 @@ npm run build    # 类型检查 + 产物构建
 ## 开发
 
 ```bash
-npx tsx scripts/test-settle.ts   # 结算引擎测试（金额守恒/分摊/贪心匹配）
-npx tsx scripts/test-daily.ts    # 日常规划 schema、日期隔离、CRUD 与持久化
-npx tsx scripts/test-mod-registry.ts # 模块开关持久化
-npx tsx scripts/test-finance.ts  # 账房金额、分类统计、旅行导入去重
+npm test                    # 全量自动化回归
+npm run audit:boundary      # 发布边界与网络调用检查
+npm run audit:modules       # 模块依赖边界检查
+npm run mod:sync            # 重建模块索引
 ```
 
 技术栈：Vue 3 + TypeScript strict + Vite + Pinia + Vue Router + Dexie(IndexedDB) + Zod + Sortable.js + Naive UI。
@@ -113,10 +117,10 @@ npx tauri build                          # 需 Rust + MSVC 工具链
 
 产物：
 
-- 安装包 `src-tauri/target/release/bundle/nsis/Knapsack_1.1.2_x64-setup.exe`
+- 安装包 `src-tauri/target/release/bundle/nsis/Knapsack_1.3.0_x64-setup.exe`
 - 免安装单文件 `src-tauri/target/release/app.exe`
 
-安装后是独立桌面程序，数据存在本机 IndexedDB，断网全功能可用。
+安装后是独立桌面程序，数据存在本机 IndexedDB。旅行、每日规划、账房和提示词等本地核心功能可离线使用；AI、天气、局域网互传和团队二维码需要各自的网络、相机或现场条件。
 
 ### 安卓版（Capacitor）
 
@@ -145,12 +149,14 @@ systemProp.https.proxyHost=127.0.0.1
 systemProp.https.proxyPort=7890
 ```
 
-生成 Release 签名包（可选）：`keytool` 生成 keystore → 在
-`android/app/build.gradle` 配 `signingConfigs.release` → `.\gradlew.bat assembleRelease`。
+生成正式 Release 签名包时，复制 `android/keystore.properties.example` 为
+`android/keystore.properties` 并填入 keystore 路径、别名和密码，然后运行
+`.\gradlew.bat assembleRelease`。未提供该文件时会回退到 Android debug key，
+只适合内部试用，不能作为商店正式包。
 
-## 红米 K40（HyperOS / MIUI）安装与保活设置
+## 红米 K20 / K40（HyperOS / MIUI）安装与保活设置
 
-K40 的系统默认限制后台与自启动，还拦截 adb/未知来源安装。按顺序做一遍，
+红米机型的系统默认限制后台与自启动，还拦截 adb/未知来源安装。按顺序做一遍，
 避免「用着用着数据像丢了」。
 
 ### 1. 允许安装（安装前必做）
@@ -158,7 +164,7 @@ K40 的系统默认限制后台与自启动，还拦截 adb/未知来源安装�
 `设置 → 更多设置 → 开发者选项`：
 
 - 打开 **「USB 调试」**
-- 打开 **「USB 调试（安全设置）」/「通过 USB 安装」** —— 不开这一步，用数据线
+- 打开 **「USB 调试（安全设置）」/「通过 USB 安装」**。不开这一步，用数据线
   `adb install` 会报 `INSTALL_FAILED_USER_RESTRICTED: Install canceled by user`
 
 直接用手机装 APK 时，首次会提示“已屏蔽安装未知应用”，点「设置」→ 允许该来源即可。
@@ -200,7 +206,7 @@ K40 的系统默认限制后台与自启动，还拦截 adb/未知来源安装�
 
 主机（PC 桌面版）：
 
-1. 打开某个行程 → 右上角「🔗 局域网会话」
+1. 打开某个行程 → 右上角「局域网会话」
 2. 面板里显示二维码；多网卡时可在下拉里切换 IP（默认首选内网地址）
 3. 保持面板打开（关闭面板即结束会话）
 
@@ -209,8 +215,8 @@ K40 的系统默认限制后台与自启动，还拦截 adb/未知来源安装�
 1. 打开同一行程 → 「🔗 局域网会话」
 2. 点「扫码加入」扫 PC 上的二维码；或把会话码粘贴进输入框后点「连接」
 3. 连上后二选一：
-   - 「从主机拉取（覆盖本地）」——用主机版本覆盖本机
-   - 「把我的版本推给主机」——把本机版本推给主机
+   - 「从主机拉取（覆盖本地）」：用主机版本覆盖本机
+   - 「把我的版本推给主机」：把本机版本推给主机
 
 ### 同步语义
 
@@ -237,7 +243,7 @@ K40 的系统默认限制后台与自启动，还拦截 adb/未知来源安装�
   knapsack-session/1?ip=<主机IP>&port=<端口>&k=<base64url 会话密钥>&s=<会话号>
   ```
 
-- Rust 侧（`src-tauri/src/session.rs`）与前端（`src/utils/lanSessionProtocol.ts`）
+- Rust 侧（`src-tauri/src/session.rs`）与前端（`src/engines/lan-share-engine/lanSessionProtocol.ts`）
   共用同一线格式，跨语言 KAT 对拍测试保证两种实现互解（见 `scripts/test-lansession.ts`）
 - 安卓端要在 WebView 里访问明文 `http://`，已在 `capacitor.config.ts`
   （`server.cleartext`、`allowMixedContent`）与 `AndroidManifest.xml`

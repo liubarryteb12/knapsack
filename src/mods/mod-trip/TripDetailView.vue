@@ -3,17 +3,17 @@ import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NButton, NTabs, NTabPane } from 'naive-ui'
 import { ChevronLeft, MonitorSmartphone } from '@lucide/vue'
-import { useTripsStore } from '../stores/trips'
-import TimelineTab from '../components/TimelineTab.vue'
-import WeatherStrip from '../components/WeatherStrip.vue'
-import UiStatusBadge from '../components/ui/UiStatusBadge.vue'
-import { destTypeIcon } from '../components/icons'
-import type { Trip } from '../schema/trip'
+import { useTripsStore } from './store'
+import TimelineTab from './components/TimelineTab.vue'
+import WeatherStrip from './components/WeatherStrip.vue'
+import UiStatusBadge from '../../components/ui/UiStatusBadge.vue'
+import { destTypeIcon } from './components/icons'
+import type { Trip } from './schema'
 
-const BudgetTab = defineAsyncComponent(() => import('../components/BudgetTab.vue'))
-const PackingTab = defineAsyncComponent(() => import('../components/PackingTab.vue'))
-const NotesTab = defineAsyncComponent(() => import('../components/NotesTab.vue'))
-const LanSessionModal = defineAsyncComponent(() => import('../components/LanSessionModal.vue'))
+const BudgetTab = defineAsyncComponent(() => import('./components/BudgetTab.vue'))
+const PackingTab = defineAsyncComponent(() => import('./components/PackingTab.vue'))
+const NotesTab = defineAsyncComponent(() => import('./components/NotesTab.vue'))
+const LanSessionModal = defineAsyncComponent(() => import('./components/LanSessionModal.vue'))
 
 const route = useRoute()
 const router = useRouter()

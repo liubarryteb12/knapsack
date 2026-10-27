@@ -17,7 +17,7 @@ import {
   buildAad,
   utf8,
   fromB64u,
-} from '../src/team/identity'
+} from '../src/mods/mod-team/domain/identity'
 
 function adb(args: string[]): string {
   return execFileSync('adb', args, { encoding: 'utf8' })

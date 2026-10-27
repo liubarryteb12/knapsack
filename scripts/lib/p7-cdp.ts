@@ -243,7 +243,7 @@ export class Cdp {
   async clickText(text: string, opts: { timeoutMs?: number } = {}): Promise<boolean> {
     const expr =
       "(() => { const want = " + JSON.stringify(text) +
-      "; const els = Array.from(document.querySelectorAll('button, a, .n-button, .n-tabs-tab, [role=\"button\"]'));" +
+      "; const els = Array.from(document.querySelectorAll('button, a, .n-button, .n-tabs-tab, .n-dropdown-option, [role=\"button\"], [role=\"menuitem\"]'));" +
       " const hit = els.find((e) => ((e.innerText || e.textContent || '').trim()) === want);" +
       " if (!hit) return false; hit.click(); return true; })()"
     const deadline = Date.now() + (opts.timeoutMs ?? 8000)
@@ -259,7 +259,7 @@ export class Cdp {
   async clickMatch(pattern: string, opts: { timeoutMs?: number } = {}): Promise<boolean> {
     const expr =
       "(() => { const re = new RegExp(" + JSON.stringify(pattern) + ");" +
-      " const els = Array.from(document.querySelectorAll('button, a, .n-button, .n-tabs-tab, [role=\"button\"]'));" +
+      " const els = Array.from(document.querySelectorAll('button, a, .n-button, .n-tabs-tab, .n-dropdown-option, [role=\"button\"], [role=\"menuitem\"]'));" +
       " const hit = els.find((e) => re.test(((e.innerText || e.textContent || '').trim())));" +
       " if (!hit) return false; hit.click(); return true; })()"
     const deadline = Date.now() + (opts.timeoutMs ?? 8000)

@@ -4,8 +4,8 @@
  * 运行：npx tsx scripts/test-publish-preview.ts
  */
 import 'fake-indexeddb/auto'
-import { createTeam, getTeam, latestPublicationOf, publishSnapshot } from '../src/db/teamActions'
-import { buildPublicSnapshot } from '../src/team/domain'
+import { createTeam, getTeam, latestPublicationOf, publishSnapshot } from '../src/mods/mod-team/db/actions'
+import { buildPublicSnapshot } from '../src/mods/mod-team/domain/domain'
 
 let failed = 0
 function check(name: string, cond: boolean) {

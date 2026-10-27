@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
+  NAlert,
   NButton,
   NCard,
   NCheckbox,
@@ -17,21 +18,32 @@ import {
   Circle,
   Pencil,
   Plus,
+  Redo2,
   Trash2,
+  Undo2,
 } from '@lucide/vue'
 import UiPageHeader from '../../components/ui/UiPageHeader.vue'
+import ModSlot from '../../core/components/ModSlot.vue'
+import { findTimeBlockConflicts } from '../../engines/timeline-engine/timeblock-scheduler'
 import { addDays, todayStr } from '../../utils/date'
+import DailyTimeline from './components/DailyTimeline.vue'
 import { useDailyStore } from './store'
 import { dailyDateSchema, type DailyTask } from './schema'
 
 const store = useDailyStore()
 const message = useMessage()
 
+function onVisibilityChange() {
+  if (document.visibilityState === 'hidden') void store.flushSave()
+}
+
 onMounted(() => {
   void store.load(todayStr())
+  document.addEventListener('visibilitychange', onVisibilityChange)
 })
 
 onBeforeUnmount(() => {
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   void store.flushSave()
 })
 
@@ -54,8 +66,23 @@ const saveLabel = computed(() => {
   })}`
 })
 
+const timelineConflicts = computed(() => {
+  const blocks = (store.day?.tasks ?? []).flatMap((task) =>
+    task.startMinute !== null && task.endMinute !== null
+      ? [{ id: task.id, startMinute: task.startMinute, endMinute: task.endMinute }]
+      : [],
+  )
+  return findTimeBlockConflicts(blocks)
+})
+
 async function moveDay(offset: number) {
   await store.load(addDays(store.currentDate, offset))
+}
+
+async function rolloverPrevious() {
+  const moved = await store.rolloverFromPrevious()
+  if (moved > 0) message.success(`已顺延 ${moved} 项未完成任务`)
+  else message.info('没有可顺延的未完成任务')
 }
 
 async function onDateChange(event: Event) {
@@ -91,6 +118,12 @@ async function toggleTask(task: DailyTask) {
   if (!(await store.toggleTask(task.id))) message.error(store.error || '更新任务失败')
 }
 
+async function moveTaskTime(taskId: string, startMinute: number, endMinute: number) {
+  if (!(await store.moveTaskTime(taskId, startMinute, endMinute))) {
+    message.error(store.error || '时间块移动失败')
+  }
+}
+
 const editingTask = ref<DailyTask | null>(null)
 const editForm = ref({ title: '', startTime: '', endTime: '', note: '' })
 
@@ -110,14 +143,6 @@ async function saveEdit() {
   const title = editForm.value.title.trim()
   if (!title) {
     message.warning('任务标题不能为空')
-    return
-  }
-  if (
-    editForm.value.startTime &&
-    editForm.value.endTime &&
-    editForm.value.endTime < editForm.value.startTime
-  ) {
-    message.warning('结束时间不能早于开始时间')
     return
   }
   const ok = await store.updateTask(task.id, {
@@ -166,7 +191,8 @@ async function clearReview() {
 
 function taskTime(task: DailyTask): string {
   if (!task.startTime && !task.endTime) return '未安排时间'
-  return `${task.startTime ?? '—'}${task.endTime ? `–${task.endTime}` : ''}`
+  const overnight = task.endMinute !== null && task.endMinute > 24 * 60
+  return `${task.startTime ?? '—'}${task.endTime ? `–${task.endTime}${overnight ? '（次日）' : ''}` : ''}`
 }
 </script>
 
@@ -174,17 +200,27 @@ function taskTime(task: DailyTask): string {
   <div class="daily-page">
     <UiPageHeader title="每日规划" subtitle="把今天安排好，也给明天留一条清晰的路">
       <div class="date-nav">
-        <n-button quaternary circle aria-label="前一天" @click="moveDay(-1)">
-          <template #icon><ChevronLeft :size="18" /></template>
-        </n-button>
-        <label class="date-picker">
-          <CalendarDays :size="15" />
-          <input :value="store.currentDate" type="date" @change="onDateChange" />
-        </label>
-        <n-button quaternary circle aria-label="后一天" @click="moveDay(1)">
-          <template #icon><ChevronRight :size="18" /></template>
-        </n-button>
-        <n-button size="small" @click="store.load(todayStr())">今天</n-button>
+        <div class="date-primary">
+          <n-button quaternary circle aria-label="前一天" @click="moveDay(-1)">
+            <template #icon><ChevronLeft :size="18" /></template>
+          </n-button>
+          <label class="date-picker">
+            <CalendarDays :size="15" />
+            <input :value="store.currentDate" type="date" @change="onDateChange" />
+          </label>
+          <n-button quaternary circle aria-label="后一天" @click="moveDay(1)">
+            <template #icon><ChevronRight :size="18" /></template>
+          </n-button>
+        </div>
+        <div class="date-actions">
+          <n-button quaternary circle :disabled="!store.canUndo" title="撤销" @click="store.undo()">
+            <template #icon><Undo2 :size="17" /></template>
+          </n-button>
+          <n-button quaternary circle :disabled="!store.canRedo" title="重做" @click="store.redo()">
+            <template #icon><Redo2 :size="17" /></template>
+          </n-button>
+          <n-button size="small" @click="store.load(todayStr())">今天</n-button>
+        </div>
       </div>
     </UiPageHeader>
 
@@ -197,6 +233,21 @@ function taskTime(task: DailyTask): string {
         {{ saveLabel }}
       </n-tag>
     </div>
+
+    <ModSlot
+      name="daily:header-banner"
+      :slot-props="{ logicalDate: store.currentDate }"
+    />
+
+    <n-alert
+      v-if="store.rolloverAvailable > 0"
+      type="info"
+      :bordered="false"
+      class="rollover-banner"
+    >
+      昨日还有 {{ store.rolloverAvailable }} 项未完成。
+      <n-button text type="primary" @click="rolloverPrevious">一键顺延到今日</n-button>
+    </n-alert>
 
     <n-card size="small" class="section plan-card">
       <template #header>
@@ -226,11 +277,29 @@ function taskTime(task: DailyTask): string {
         <span>今天还没有任务，从上面加一件小事开始。</span>
       </div>
 
+      <DailyTimeline :tasks="store.day?.tasks ?? []" @move="moveTaskTime" />
+      <n-alert
+        v-if="timelineConflicts.length > 0"
+        type="warning"
+        :bordered="false"
+        class="timeline-conflict"
+      >
+        发现 {{ timelineConflicts.length }} 处时间块重叠，请调整任务时间。
+      </n-alert>
+
       <div v-for="task in store.sortedTasks" :key="task.id" class="task-row" :class="{ done: task.done }">
         <n-checkbox :checked="task.done" @update:checked="() => toggleTask(task)" />
         <div class="task-main">
           <div class="task-title-row">
             <span class="task-title">{{ task.title }}</span>
+            <n-tag
+              v-if="task.rolloverCount >= 3"
+              size="tiny"
+              type="warning"
+              :bordered="false"
+            >
+              已延期 {{ task.rolloverCount }} 次
+            </n-tag>
             <span class="task-time">{{ taskTime(task) }}</span>
           </div>
           <p v-if="task.note" class="task-note">{{ task.note }}</p>
@@ -327,6 +396,11 @@ function taskTime(task: DailyTask): string {
       </n-card>
     </div>
 
+    <ModSlot
+      name="daily:review-footer"
+      :slot-props="{ logicalDate: store.currentDate }"
+    />
+
     <n-modal
       :show="!!editingTask"
       preset="card"
@@ -373,6 +447,13 @@ function taskTime(task: DailyTask): string {
   gap: var(--space-2);
 }
 
+.date-primary,
+.date-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .date-picker {
   display: flex;
   align-items: center;
@@ -411,6 +492,10 @@ function taskTime(task: DailyTask): string {
   margin-bottom: var(--space-4);
 }
 
+.rollover-banner {
+  margin-bottom: var(--space-4);
+}
+
 .card-heading {
   display: flex;
   align-items: center;
@@ -445,6 +530,10 @@ function taskTime(task: DailyTask): string {
   padding: var(--space-6) var(--space-3);
   color: var(--app-muted-soft);
   font-size: var(--text-sm);
+}
+
+.timeline-conflict {
+  margin-bottom: var(--space-3);
 }
 
 .task-row {
@@ -544,11 +633,21 @@ function taskTime(task: DailyTask): string {
 
   .date-nav {
     justify-content: space-between;
+    flex-wrap: wrap;
   }
 
   .date-picker {
     flex: 1;
     justify-content: center;
+    min-width: 0;
+  }
+
+  .date-primary {
+    flex: 1 1 100%;
+  }
+
+  .date-actions {
+    margin-left: auto;
   }
 
   .quick-add {

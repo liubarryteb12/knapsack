@@ -6,17 +6,17 @@
  * 说明：同一台设备同一个 teamId 只有一行 teamState，myMemberId 只能是一个角色，
  * 因此组织者视图（甲）与成员视图（乙）用两个独立 teamId。
  */
-import { teamStateSchema, publicationMetaSchema } from '../../src/team/schema'
-import type { TeamState, Submission, PublicSnapshot, PublicationMeta } from '../../src/team/schema'
-import { TEAM_FORMAT } from '../../src/team/protocol'
-import { buildPublicSnapshot } from '../../src/team/domain'
-import { serializePublicFile } from '../../src/team/teamFile'
+import { teamStateSchema, publicationMetaSchema } from '../../src/mods/mod-team/domain/schema'
+import type { TeamState, Submission, PublicSnapshot, PublicationMeta } from '../../src/mods/mod-team/domain/schema'
+import { TEAM_FORMAT } from '../../src/mods/mod-team/domain/protocol'
+import { buildPublicSnapshot } from '../../src/mods/mod-team/domain/domain'
+import { serializePublicFile } from '../../src/mods/mod-team/domain/teamFile'
 import type {
   TeamIdempotencyRecord,
   TeamLink,
   TeamOutboxEntry,
   TeamPublicationRow,
-} from '../../src/db/teamSchema'
+} from '../../src/mods/mod-team/db/schema'
 
 export const ORG_TEAM_ID = 'p7teamorg0001'
 export const MEM_TEAM_ID = 'p7teammem0001'

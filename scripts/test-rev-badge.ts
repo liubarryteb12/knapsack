@@ -1,5 +1,5 @@
 // 细节 B 验证：修订强提示的数据逻辑（角标触发 + diff 计算）
-import { submissionSchema, teamStateSchema, type Submission } from '../src/team/schema'
+import { submissionSchema, teamStateSchema, type Submission } from '../src/mods/mod-team/domain/schema'
 
 let failed = 0
 function check(name: string, cond: boolean) {

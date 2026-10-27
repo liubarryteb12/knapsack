@@ -9,6 +9,7 @@
  * 运行：npx tsx scripts/audit-release-boundaries.ts
  */
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import path from 'node:path'
 
 const root = process.cwd()
@@ -41,10 +42,10 @@ function read(file: string): string {
 
 const allowedNetworkFiles = new Set([
   'src/utils/aiConfig.ts',
-  'src/utils/aiDraft.ts',
-  'src/utils/weather.ts',
-  'src/team/teamClient.ts',
-  'src/utils/lanSessionProtocol.ts',
+  'src/mods/mod-trip/services/aiDraft.ts',
+  'src/mods/mod-trip/services/weather.ts',
+  'src/mods/mod-team/domain/teamClient.ts',
+  'src/engines/lan-share-engine/lanSessionProtocol.ts',
 ])
 
 const networkPatterns: Array<{ name: string; re: RegExp }> = [
@@ -68,7 +69,7 @@ if (!failures.some((f) => f.startsWith('网络调用点白名单'))) {
 
 const forbiddenAutoNetwork: Array<{ file: string; re: RegExp; label: string }> = [
   {
-    file: 'src/views/TripsView.vue',
+    file: 'src/mods/mod-trip/TripsView.vue',
     re: /\bcheckAiReachable\b|\bsetTimeout\s*\(\s*probeAi\b/,
     label: '旅行首页不得后台探活 AI',
   },
@@ -135,22 +136,93 @@ if (extraPermissions.length > 0) fail('Android 权限白名单', extraPermission
 else pass('Android 权限白名单', permissions.join(', ') || '无')
 
 const tauri = JSON.parse(read(path.join(root, 'src-tauri/tauri.conf.json'))) as {
+  version?: string
   app?: { security?: { csp?: string } }
+}
+if (tauri.version !== packageJson.version) {
+  fail('Tauri 版本', `配置 ${String(tauri.version)} / package ${String(packageJson.version)}`)
+} else {
+  pass('Tauri 版本', String(tauri.version))
+}
+const androidGradle = read(path.join(root, 'android/app/build.gradle'))
+const androidVersionName = /versionName\s+"([^"]+)"/.exec(androidGradle)?.[1]
+const androidVersionCode = /versionCode\s+(\d+)/.exec(androidGradle)?.[1]
+if (androidVersionName !== packageJson.version) {
+  fail('Android 版本', `versionName ${String(androidVersionName)} / package ${String(packageJson.version)}`)
+} else {
+  pass('Android 版本', `${androidVersionName} (${androidVersionCode ?? '?'})`)
 }
 const csp = tauri.app?.security?.csp ?? ''
 if (!csp.includes('connect-src')) fail('Tauri CSP', '缺少 connect-src')
 else if (/connect-src[^;]*\*/.test(csp)) fail('Tauri CSP', 'connect-src 含通配符 *')
 else pass('Tauri CSP', '仅 self/HTTPS/私网局域网')
 
+const version = packageJson.version ?? ''
 const requiredRelease = [
+  `release/Knapsack-${version}-release.apk`,
   'release/Knapsack-release.apk',
   'release/Knapsack-debug.apk',
+  `release/Knapsack-${version}-x64-setup.exe`,
   'release/Knapsack-setup.exe',
-  `release/Knapsack-${packageJson.version ?? ''}-portable.exe`,
+  `release/Knapsack-${version}-portable.exe`,
 ]
 const missingRelease = requiredRelease.filter((file) => !existsSync(path.join(root, file)))
 if (missingRelease.length > 0) fail('发布产物', `缺少 ${missingRelease.join(', ')}`)
 else pass('发布产物', 'APK/setup/portable 均存在')
+
+const releaseManifestPath = path.join(root, 'release/manifest.json')
+if (!existsSync(releaseManifestPath)) {
+  fail('发布清单', 'release/manifest.json 不存在')
+} else {
+  try {
+    const releaseManifest = JSON.parse(read(releaseManifestPath)) as {
+      version?: string
+      artifacts?: unknown
+    }
+    const artifacts = Array.isArray(releaseManifest.artifacts)
+      ? releaseManifest.artifacts.filter((item): item is string => typeof item === 'string')
+      : []
+    const missingArtifacts = releaseManifest.artifacts === undefined
+      ? ['artifacts']
+      : requiredRelease
+          .map((file) => path.basename(file))
+          .filter((file) => !artifacts.includes(file))
+    if (releaseManifest.version !== packageJson.version || missingArtifacts.length > 0) {
+      fail(
+        '发布清单',
+        `version=${String(releaseManifest.version)}，缺少 ${missingArtifacts.join(', ') || '无'}`,
+      )
+    } else {
+      pass('发布清单', `${version}，${artifacts.length} 个产物`)
+    }
+  } catch {
+    fail('发布清单', 'release/manifest.json 不是合法 JSON')
+  }
+}
+
+const checksumsPath = path.join(root, 'release/SHA256SUMS.txt')
+if (!existsSync(checksumsPath)) {
+  fail('发布校验和', 'release/SHA256SUMS.txt 不存在')
+} else {
+  const checksumLines = read(checksumsPath)
+    .split(/\r?\n/)
+    .map((line) => /^([a-f0-9]{64})\s{2}(.+)$/.exec(line.trim()))
+    .filter((match): match is RegExpExecArray => match !== null)
+  const checksums = new Map(checksumLines.map((match) => [match[2]!, match[1]!]))
+  const checksumProblems: string[] = []
+  for (const file of requiredRelease) {
+    const filename = path.basename(file)
+    const expected = checksums.get(filename)
+    if (!expected) {
+      checksumProblems.push(`${filename} 缺少记录`)
+      continue
+    }
+    const actual = createHash('sha256').update(readFileSync(path.join(root, file))).digest('hex')
+    if (actual !== expected) checksumProblems.push(`${filename} 哈希不符`)
+  }
+  if (checksumProblems.length > 0) fail('发布校验和', checksumProblems.join('；'))
+  else pass('发布校验和', `${requiredRelease.length} 个产物一致`)
+}
 
 const distFiles = walk(path.join(root, 'dist'), ['.js', '.html'])
 const distText = distFiles.map(read).join('\n')
@@ -169,7 +241,7 @@ if (!androidText.includes('日常规划') || !androidText.includes('日常账房
   pass('Android 资产同步', '每日规划、日常账房已进入 APK assets')
 }
 
-console.log('行囊 v1.1.x 发布边界审计')
+console.log(`行囊 v${version} 发布边界审计`)
 console.log('')
 for (const item of passes) console.log(`  PASS  ${item}`)
 for (const item of failures) console.log(`  FAIL  ${item}`)

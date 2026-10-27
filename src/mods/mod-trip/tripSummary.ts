@@ -1,6 +1,6 @@
-import type { EnabledModules, Trip } from '../schema/trip'
+import type { EnabledModules, Trip } from './schema'
 
-/** 旅行列表只需要展示字段，不应把 days/expenses/notes 等完整聚合根常驻内存。 */
+/** Lightweight projection owned by the trip cartridge. */
 export interface TripSummary {
   id: string
   name: string

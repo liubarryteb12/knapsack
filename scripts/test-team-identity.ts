@@ -20,7 +20,7 @@ import {
   bytesToBase64,
   toB64u,
   utf8,
-} from '../src/team/identity'
+} from '../src/mods/mod-team/domain/identity'
 
 let failed = 0
 function check(name: string, cond: boolean) {
@@ -118,7 +118,7 @@ async function testAad() {
 
 async function testSendActionWire() {
   console.log('客户端真实报文 AAD')
-  const { sendAction } = await import('../src/team/teamClient')
+  const { sendAction } = await import('../src/mods/mod-team/domain/teamClient')
   const host = await generateEcdhKeyPair()
   const client = await generateEcdhKeyPair()
   const sessionId = 'wire-session'
@@ -236,7 +236,7 @@ async function testTicket() {
 async function testJoinFlow() {
   console.log('加入/审批/恢复配对')
   const { createTeam, registerJoinRequest, approveJoin, getJoinStatus, resolveActor, rejectJoin } = await import(
-    '../src/db/teamActions'
+    '../src/mods/mod-team/db/actions'
   )
 
   const team = await createTeam({ name: '加入测试团', organizerName: '甲' })
@@ -305,7 +305,7 @@ async function testJoinFlow() {
   }
 
   // 恢复配对：审批响应丢失后重新申请，保留原 memberId，不重复名册
-  const before = await import('../src/db/teamActions').then((m) => m.getTeam(team.teamId))
+  const before = await import('../src/mods/mod-team/db/actions').then((m) => m.getTeam(team.teamId))
   const rosterBefore = before!.roster.length
 
   const r3 = await registerJoinRequest({
@@ -326,7 +326,7 @@ async function testJoinFlow() {
   check('恢复配对保留原 memberId', restored.ok && appr.ok && restored.memberId === appr.memberId)
   check('恢复配对标记 restored=true', restored.ok && restored.restored === true)
 
-  const after = await import('../src/db/teamActions').then((m) => m.getTeam(team.teamId))
+  const after = await import('../src/mods/mod-team/db/actions').then((m) => m.getTeam(team.teamId))
   check('名册未重复（人数不变）', after!.roster.length === rosterBefore)
 
   // 拒绝路径

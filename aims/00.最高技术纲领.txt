@@ -1,25 +1,397 @@
-# 行囊 (Knapsack) · 平台化架构演进宪章 (v2.0 Blueprint)
+# 行囊 (Knapsack) · 最高技术纲领：微内核插座底座与零侵入 Mod 扩展宪法 (00.最高技术纲领-20261026.txt / v4.0)
 
-## 1. 核心架构定性：微内核 + 共享引擎 + 可插拔业务模块 (Mod)
-本项目从单一“旅行工具”正式演进为**本地优先的个人生活模块化平台 (Local-First Modular Life OS)**。架构固定为以下三层，严禁跨层耦合：
 
-### 第一层：宿主内核层 (Host Core - `src/core/`)
-- **职责**：本地持久化 (IndexedDB)、全局路由与导航外壳、主题管理、全局导入导出备份、模块注册中心 (`ModRegistry`)。
-- **红线**：100% 本地存储，零云端服务器，零资金流转/支付接口。
 
-### 第二层：共享能力引擎层 (Shared Engines - `src/engines/`)
-将原旅行模块中的通用能力解耦下沉，供所有当前及未来模块复用：
-1. **LedgerEngine (账务与统计引擎)**：提供基础流水记录、多维分类标签、分摊计算，以及**消费成分结构分析（占比统计、周期环比、可视化聚合数据输出）**。
-2. **TimelineEngine (时间与日程引擎)**：提供跨天行程编排、单日时间块 (Time-blocking) 计划、任务状态流转与撤销栈。
-3. **NoteEngine (备忘与复盘引擎)**：提供结构化模板（如每日复盘三问、旅行备忘）、自动保存与标签检索。
-4. **LanShareEngine (轻量近场分享引擎)**：仅用于设备间面对面扫码的数据同步与组团协作（按需开启，不常驻后台）。
+> **【最高技术宪法 · Master Architecture Charter】**
 
-### 第三层：可插拔业务模块层 (Domain Mods - `src/mods/`)
-所有业务功能必须遵循统一的 `ModManifest` 接口规范进行挂载，支持用户在设置中独立启用/隐藏：
-- `mod-trip`（旅行模块）：已就绪。后续逐步将其内部的记账与备忘逻辑迁移至共享引擎。
-- `mod-daily`（每日计划与复盘模块）：包含每日 To-Do 计划、随手备忘录、每日结构化复盘。
-- `mod-finance`（日常记账与消费分析模块）：包含每日花费速记、资金消费趋势、**消费成分结构分析**（支持一键关联/导入 `mod-trip` 的旅行消费账单）。
-- `mod-ext-*`（预留扩展插槽）：通过标准化生命周期钩子（`onInstall`, `onMount`, `onExport`）预留扩展空间，确保未来新增“待定”模块时零侵入宿主代码。
+> 1. **核心哲学**：把「行囊」打造为**“像游戏主机插卡带、像 Obsidian 装插件”**的个人生活基座。**宿主底座（Core）与能力引擎（Engines）永远对具体的业务 Mod 保持“无知（Agnostic）”**。
 
-## 2. 演进策略（渐进式重构）
-- **不推倒重来**：在启动 `mod-daily`（每日计划）或 `mod-finance`（日常记账）开发时，采用“边开发新模块、边抽离共享引擎”的渐进策略，确保现有功能 100% 稳定。
+> 2. **终极检验标准（Zero-Touch Host Rule）**：未来当你突发奇想，要新增第 4 个、第 10 个新模块（如健身打卡、读书笔记、物品收纳、车辆保养）时，**AI 只需要在 `src/mods/mod-xxx/` 下新建一个文件夹，宿主底座代码（`src/core/`）和其它模块代码一行都不需要改，就能自动挂载运行、自动进导航、自动参与联动、自动进备份！**
+
+> 3. **最高上位法效力**：任何模块级文档（`*-aims-总目标`、`*-aimstodolist`、`*-aims落地`）若与本纲领冲突，一律以本纲领为准。
+
+
+
+---
+
+
+
+## 一、 为什么大多数模块化项目最后会“僵死”？（我们要避开的三大死穴）
+
+
+
+在普通代码架构中，虽然名义上分了文件夹，但每加一个新功能还是要改几十处老代码。为实现真正的**“灵活插拔 Mod 基座”**，全平台严禁触碰以下三大死穴：
+
+
+
+1. ❌ **死穴一：白名单写死模块 ID**（如 `id: 'mod-trip' | 'mod-daily'`）
+
+   - **正确基座做法**：改为开放式命名契约 `id: \`mod-${string}\`` + 构建期自动扫描发现（`import.meta.glob('../mods/*/manifest.ts')`），放入文件夹即自动识别。
+
+2. ❌ **死穴二：宿主底座预先建死所有数据库表**
+
+   - **正确基座做法**：宿主不知晓具体业务表。每个 Mod 在自己的 `manifest.ts` 中声明自己需要的私有表（`dbStores`），宿主在挂载该 Mod 时动态创建隔离的存储命名空间。
+
+3. ❌ **死穴三：模块之间指名道姓互相调用**（如每日计划写死“去调旅游模块和记账模块”）
+
+   - **正确基座做法**：改为**“标准化插槽（UI Slots）+ 通用能力标签（Capability Bus）”**。比如每日计划只留一个“今日生活足迹插槽（`slot:daily-footprint`）”，以后无论是旅游、记账，还是新加的“健身 Mod”、“吃药提醒 Mod”，只要往这个插槽塞卡片，就能自动出现在每日复盘里！
+
+
+
+---
+
+
+
+## 二、 三层插座底座架构（Host + Engines + Pluggable Mods）
+
+
+
+```text
+
+┌─────────────────────────────────────────────────────────────────────────┐
+
+│ 第三层：可插拔业务卡带层 (src/mods/mod-*)                                │
+
+│  [mod-trip 旅游]  [mod-daily 每日计划]  [mod-finance 记账]  [mod-xxx 新卡带] │
+
+│  • 100% 自治目录：自备 UI、自备私有表、自声明能力供給与插槽挂载              │
+
+│  • 严禁横向 import 任何兄弟 Mod，拔掉任意一个文件夹系统照常编译运行！         │
+
+└───────────────────┬─────────────────────────────────▲───────────────────┘
+
+                    │ 按需调用积木                     │ 通过标准插槽/总线热插拔
+
+┌───────────────────▼─────────────────────────────────┴───────────────────┐
+
+│ 第二层：可组合能力引擎层 / 标准件武库 (src/engines/*-engine)             │
+
+│  [LedgerEngine 账务] [TimelineEngine 时间轴] [NoteEngine 笔记] [LanShare 扫码]│
+
+│  • 纯逻辑与通用算法积木：不知道上层是“旅游”还是“健身”，给参数就干活          │
+
+└───────────────────────────────────┬─────────────────────────────────────┘
+
+                                    │ 依托基础底座
+
+┌───────────────────────────────────▼─────────────────────────────────────┐
+
+│ 第一层：微内核宿主底座 (src/core/) —— 写好后几乎永远不用再改代码！        │
+
+│  • ModLoader (自动扫描挂载)  • SlotManager (跨模块UI插槽)                 │
+
+│  • CapabilityBus (能力交换)  • SandboxedDB (分表隔离与全量备份)           │
+
+└─────────────────────────────────────────────────────────────────────────┘
+
+```
+
+
+
+### 2.1 第一层：微内核宿主底座 (`src/core/`) —— 四大核心插座机制
+
+宿主底座本身**不包含任何一行具体业务代码**，只提供 4 个标准化插座：
+
+
+
+1. **自动卡带加载器 (`ModLoader` & `ModRegistry`)**：
+
+   - 启动时通过 `import.meta.glob('/src/mods/*/manifest.ts', { eager: true })` 自动扫描所有已安装的 Mod。
+
+   - 用户可在「设置 -> 模块管理」中随时开启/关闭任意 Mod（开关状态持久化在宿主配置表），关闭后导航栏隐藏、不加载对应路由组件，但本地历史数据安全保留。
+
+2. **UI 扩展插槽管理器 (`SlotManager`)**：
+
+   - 宿主与各模块可暴露公开的 **命名插槽（Named UI Slots）**，其他 Mod 可声明将自己的微卡片挂载到指定插槽中：
+
+     - `host:nav-bar`：底部/侧边主导航栏入口
+
+     - `host:quick-action`：全局悬浮「+」号极速操作菜单（如一键记一笔、一键记闪念）
+
+     - `daily:header-banner`：每日计划顶部的状态横幅位（旅游 Mod 在旅行期间自动往这里塞“今日行程提示”）
+
+     - `daily:review-footer`：每日晚间复盘底部的“今日生活足迹汇总位”（记账 Mod 往这里塞“今日开销卡片”，未来健身 Mod 可往这里塞“今日运动消耗卡片”）
+
+3. **跨模块只读能力总线 (`CapabilityBus`)**：
+
+   - 模块之间不认识彼此，只认**“标准能力协议（Capability Topic）”**。
+
+   - 当某个模块未安装或被用户关闭时，调用方通过 `CapabilityBus.query('capability:expense-summary')` 收到空数组 `[]`，界面优雅降级隐藏，**绝不报错崩溃**。
+
+4. **沙箱化存储与统一备份中心 (`SandboxedDB` & `BackupCenter`)**：
+
+   - 为每个 Mod 分配强制带前缀的 IndexedDB 表空间（`mod_<id>_<storeName>`），严禁跨模块直接读写他人的表。
+
+   - 全局备份时，宿主自动遍历所有已注册 Mod 的 `dbStores` 打包成单一 `.knapsack-backup.json`（附 SHA-256 校验码），新增 Mod 自动纳入全局备份，无需修改备份代码。
+
+
+
+---
+
+
+
+### 2.2 第二层：可组合能力引擎层 (`src/engines/`) —— 通用乐高积木库
+
+把业务中高频重复的硬核逻辑抽成**与业务无关（Domain-Agnostic）的纯技术引擎**。未来开发新 Mod 时，像拼乐高一样按需组合：
+
+
+
+| 引擎积木 | 物理路径 | 提供的通用能力（不绑定特定业务） | 谁在用它（含未来新 Mod 举例） |
+
+|---|---|---|---|
+
+| **LedgerEngine**<br>账务与比例引擎 | `src/engines/ledger-engine/` | • 整数分（Integer Cents）零误差运算<br>• 多人 AA 分摊与最小转账路径求解<br>• **结构占比分析器（最大余额法确保百分比和恒等于 100.0%）** | • `mod-trip`（算团费分摊）<br>• `mod-finance`（算日常账本与消费成分）<br>• *未来：人情份子钱 Mod、装修预算 Mod* |
+
+| **TimelineEngine**<br>时间轴与撤销引擎 | `src/engines/timeline-engine/` | • 跨天日程排期 & 单日分钟级时间块（Time-blocking）<br>• 任务跨日顺延状态机（Rollover）<br>• **通用 50 步撤销重做栈（Command Undo/Redo Stack）** | • `mod-trip`（排跨天旅游路线）<br>• `mod-daily`（排今日时间块与 To-Do）<br>• *未来：习惯打卡 Mod、阶段项目倒计时 Mod* |
+
+| **NoteEngine**<br>结构化文档引擎 | `src/engines/note-engine/` | • 结构化卡片/清单（Checklist）与问答模板渲染<br>• **300ms 防抖自动保存 + 切后台强制 `flushNow()` 防丢稿**<br>• 多维标签（Tags）本地毫秒级检索 | • `mod-trip`（行李清单/攻略卡）<br>• `mod-daily`（随手备忘/每日三问复盘）<br>• `mod-prompts`（提示词`{{变量}}`模板、词块胶囊与四维分面标签检索）<br>• *未来：读书观影笔记 Mod* |
+
+| **LanShareEngine**<br>面对面近场引擎 | `src/engines/lan-share-engine/` | • 二维码分片动态编解码、局域网点对点直连同步<br>• 快照 SHA-256 摘要签名与多版本修订 Diff 计算 | • `mod-trip`（亲友面对面扫码建团、上报审核）<br>• *未来：家庭共享购物清单扫码同步* |
+
+
+
+---
+
+
+
+### 2.3 第三层：可插拔业务模块层 (`src/mods/`) —— 标准卡带接口 (`ModManifest`)
+
+每一个功能模块都是 `src/mods/mod-<name>/` 下的一个**自包含独立王国**，通过唯一入口 `manifest.ts` 向基座声明自己：
+
+
+
+```typescript
+
+// src/core/types/mod-manifest.ts —— 全平台唯一卡带标准契约
+
+export interface ModManifest {
+
+  /** 1. 开放式唯一标识：任何新模块只需遵循 mod-xxx 命名，无需修改核心类型表 */
+
+  id: `mod-${string}`;
+
+  name: string;
+
+  icon: string;
+
+  version: string;
+
+  description: string;
+
+  enabledByDefault: boolean;
+
+
+
+  /** 2. 私有存储声明：宿主自动为其创建隔离表，自动纳入全局导入导出备份 */
+
+  dbStores: Array<{
+
+    name: string;          // 实际落库强制校验前缀，如 'trip_plans', 'daily_tasks', 'finance_entries'
+
+    keyPath: string;
+
+    indexes?: Array<{ name: string; keyPath: string | string[]; unique?: boolean }>;
+
+  }>;
+
+
+
+  /** 3. 路由与主导航挂载：自动注入宿主路由表与导航栏 */
+
+  routes: RouteRecordRaw[];
+
+  navItem?: { label: string; icon: string; order: number };
+
+
+
+  /** 4. 跨模块 UI 插槽贡献（Slot Contributions）：往底座或其他模块的插槽里塞微卡片 */
+
+  slotContributions?: Array<{
+
+    targetSlot: 'host:quick-action' | 'daily:header-banner' | 'daily:review-footer' | `${string}:${string}`;
+
+    component: Component;
+
+    order?: number;
+
+  }>;
+
+
+
+  /** 5. 跨模块只读能力暴露（Capability Providers）：供其他模块通过总线安全查询 */
+
+  providesCapabilities?: {
+
+    /** 例如：提供某日期的生活足迹摘要（旅游、记账、未来的运动模块均可实现此接口） */
+
+    'capability:daily-footprint'?: (logicalDate: string) => Promise<DailyFootprintSummary | null>;
+
+    /** 例如：提供专项消费汇总（旅游模块实现此接口，记账模块只读拉取用于消费成分分析） */
+
+    'capability:special-expense-ledger'?: () => Promise<SpecialExpenseLedgerSummary[]>;
+
+    [customTopic: `capability:${string}`]: ((...args: any[]) => Promise<any>) | undefined;
+
+  };
+
+
+
+  /** 6. 标准生命周期钩子 */
+
+  onActivate?: (ctx: HostContext) => Promise<void> | void;
+
+  onDeactivate?: () => Promise<void> | void;
+
+}
+
+```
+
+
+
+---
+
+
+
+## 三、 新模块“零侵入”接入 SOP（以后你想加任何新 Mod 的标准姿势）
+
+
+
+在这个基座设计下，未来无论你想加什么新模块（比如 `mod-reading` 读书笔记、或 `mod-health` 运动健康），只需让 AI 执行以下 **3 步标准动作**：
+
+
+
+1. **新建独立卡带目录**：在 `src/mods/mod-xxx/` 下创建 `manifest.ts`、`schema/`、`components/`，并配齐该模块专属的三份文档（`xxx模块-aims-总目标`、`aimstodolist`、`aims落地`）。
+
+2. **按需拼装底层引擎**：算钱调 `LedgerEngine`、排时间或做撤销调 `TimelineEngine`、写卡片或自动保存调 `NoteEngine`。如果新模块有全新的通用底层能力，先下沉到 `src/engines/` 再调用。
+
+3. **插上插槽即插即用**：在 `manifest.ts` 里声明 `navItem`（自动出现在导航栏）、声明 `dbStores`（自动建表并进入全局备份）、声明 `slotContributions`（自动把今日打卡摘要挂进每日计划的复盘页）。**全程零修改 `src/core/` 和其他老模块代码！**
+
+
+
+---
+
+
+
+## 四、 全平台通用数据宪章與绝对禁区（Data Laws & Anti-Goals）
+
+
+
+所有挂载在基座上的 Mod，无论现在还是未来，必须遵守统一的“度量衡”与底线：
+
+
+
+### 4.1 跨模块统一度量衡（防止模块联调时数据错乱）
+
+1. **金额统一度量衡（Integer Cents）**：全平台凡涉及钱的字段，存储、计算、跨模块能力总线传输**一律用整数分（`amountCents: number`）**，UI 展示层统一格式化为元。
+
+2. **日期统一度量衡（Local Logical Date）**：全平台凡按“天”聚合的插槽或查询（如 `daily:review-footer`），统一传递本地时区字符串 `YYYY-MM-DD`，严禁直接截断 UTC `toISOString()`。
+
+3. **单向依赖红线**：
+
+   - `src/core/` 与 `src/engines/` **严禁** `import` 任何 `src/mods/*`。
+
+   - `src/mods/mod-A` **严禁**直接 `import` `src/mods/mod-B`；所有跨模块交互必须走 `SlotManager`（UI 插槽）或 `CapabilityBus`（只读能力总线），且必须处理“对方模块未开启/不存在”时的空值降级。
+
+
+
+### 4.2 全平台绝对禁区（Global Anti-Goals）
+
+- 🚫 **绝不碰真实资金流与支付接口**：100% 纯数字记录、分摊与消费结构分析。
+
+- 🚫 **绝不搞云端服务器与账号监控**：100% 本地 IndexedDB 沙箱存储，零遥测。
+
+- 🚫 **绝不把简单工具复杂化**：近场协作仅限手机面对面扫码/局域网直连（隶属 `LanShareEngine`），严禁搞远程主机控制。
+
+
+
+---
+
+
+
+## 五、 全平台文档治理矩阵與 AI 执行总守则（1 + N×3 弹性文档体系）
+
+
+
+随着你的 Mod 像卡带一样不断增加，文档体系也完全模块化——**1 份最高基座宪法 + N 个模块各自的 3 件套**：
+
+
+
+```text
+
+knapsack-docs/
+
+├── 00.最高技术纲领-20261026.txt               # [基座宪法] 微内核插座标准、引擎武库、ModManifest 契约（本文件）
+
+│
+
+├── [核心枢纽 00] 团队分享模块 (mod-team)       # [全平台协同] 通用建群/花名册、跨模块数据包扫码收发、多版本Diff审核
+
+│   ├── 团队分享模块-aims-总目标-20261026.txt
+
+│   ├── 团队分享模块-aimstodolist-20261026.txt
+
+│   └── 团队分享模块-aims落地-20261026.txt
+
+│
+
+├── [业务卡带 01] 旅游模块 (mod-trip)          # [业务卡带] 行程时间轴排期、旅行开支分摊与行李清单（协同复用团队分享模块）
+
+│   ├── 旅游模块-aims-总目标-20261026.txt
+
+│   ├── 旅游模块-aimstodolist-20261026.txt
+
+│   └── 旅游模块-aims落地-20261026.txt
+
+│
+
+├── [业务卡带 02] 每日计划模块 (mod-daily)      # [业务卡带] 单日时间块、待办池、50步撤销栈、每日三问复盘
+
+│   ├── 每日计划模块-aims-总目标-20261026.txt
+
+│   ├── 每日计划模块-aimstodolist-20261026.txt
+
+│   └── 每日计划模块-aims落地-20261026.txt
+
+│
+
+├── [业务卡带 03] 记账模块 (mod-finance)        # [业务卡带] 整数分定点数、消费成分结构分析(最大余额法)、旅行净支出联动
+
+│   ├── 记账模块-aims-总目标-20261026.txt
+
+│   ├── 记账模块-aimstodolist-20261026.txt
+
+│   └── 记账模块-aims落地-20261026.txt
+
+│
+
+├── [业务卡带 04] 提示词模块 (mod-prompts)      # [业务卡带] 工作(LLM)/生图/生视频三态、{{变量}}填空、词块胶囊、四维分面标签
+
+│   ├── 提示词模块-aims-总目标-20261026.txt
+
+│   ├── 提示词模块-aimstodolist-20261026.txt
+
+│   └── 提示词模块-aims落地-20261026.txt
+
+│
+
+└── [业务卡带 05...N] 未来任意新模块 (mod-xxx)  # 随时复制一套 3 件套即可开工，零侵入已有体系！
+
+    ├── xxx模块-aims-总目标.txt
+
+    ├── xxx模块-aimstodolist.txt
+
+    └── xxx模块-aims落地.txt
+
+```
+
+
+
+### AI 执行端死命令（Master AI Protocol）
+
+1. **上下文按需加载（节省 Token 且防串味）**：AI 在开发某个具体 Mod 时，**只需读取《00.最高技术纲领》+ 该 Mod 自己的 3 份文件**，无需加载其他兄弟 Mod 的业务文档，保持上下文极致纯净。
+
+2. **全局 WIP = 1 锁死**：同一时间仅允许 1 个 Mod 的 1 个子任务处于 `[/]` 状态，写完代码并跑通单测后必须同步更新对应 `aimstodolist` 的日志与状态。
+
+3. **底座与引擎修改连坐防线**：若仅修改某个 `mod-xxx` 内部代码，只需跑该 Mod 的测试脚本；一旦修改了 `src/core/` 或 `src/engines/`，必须跑通全平台所有已挂载 Mod 的回归测试脚本（100% 绿灯）方可打卡。
+
+4. **代码推送铁律**：未收到人类明确的 `PUSH` 指令前，严禁执行 `git push`。

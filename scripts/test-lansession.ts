@@ -17,7 +17,7 @@ import {
   buildJoinPayload,
   parseJoinPayload,
   SESSION_PROTOCOL,
-} from '../src/utils/lanSessionProtocol'
+} from '../src/engines/lan-share-engine/lanSessionProtocol'
 
 let failed = 0
 function expect(cond: boolean, label: string) {

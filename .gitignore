@@ -33,6 +33,8 @@ release/
 
 # 真机调试截图与证据产物（不入库，按需本地查阅）
 scripts/out/
+reports/device-smoke/
+reports/e2e-team/
 
 # aims/ 目录为本地草稿（不入库）；正式文档已挂载根目录
 aims/

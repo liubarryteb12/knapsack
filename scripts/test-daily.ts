@@ -10,9 +10,9 @@ import {
   createDailyDay,
   dailyDaySchema,
   newDailyTask,
+  parseDailyDay,
 } from '../src/mods/mod-daily/schema'
 import { useDailyStore } from '../src/mods/mod-daily/store'
-import { MOD_MANIFESTS, enabledMods, modState, setModEnabled } from '../src/core/modRegistry'
 
 let failed = 0
 function check(name: string, cond: boolean) {
@@ -33,14 +33,6 @@ async function expectThrow(name: string, fn: () => unknown) {
 }
 
 async function main() {
-  console.log('ModRegistry')
-  check('登记旅行、日常、账房三个模块', MOD_MANIFESTS.length === 3)
-  check('默认模块启用', modState.trip && modState.daily && modState.finance)
-  setModEnabled('daily', false)
-  check('模块可关闭', !modState.daily && !enabledMods().some((m) => m.id === 'daily'))
-  setModEnabled('daily', true)
-  check('模块可重新启用', modState.daily && enabledMods().some((m) => m.id === 'daily'))
-
   console.log('mod-daily schema')
   const day = createDailyDay('2026-10-23')
   check('空记录可创建', dailyDaySchema.safeParse(day).success)
@@ -65,6 +57,20 @@ async function main() {
   const task = newDailyTask({ title: '整理照片 🎒', startTime: '09:00', endTime: '10:00' })
   check('任务含稳定 id', task.id.length > 0)
   check('任务时间与 Emoji 保留', task.title.includes('🎒') && task.startTime === '09:00')
+  const legacyDay = parseDailyDay({
+    ...createDailyDay('2026-10-27'),
+    tasks: [{
+      id: 'legacy-time',
+      title: '旧时间格式',
+      startTime: '23:30',
+      endTime: '01:30',
+      done: false,
+      note: '',
+      createdAt: 1,
+      updatedAt: 1,
+    }],
+  })
+  check('旧 HH:mm 数据自动补齐分钟轴', legacyDay.tasks[0]?.startMinute === 1410 && legacyDay.tasks[0]?.endMinute === 1530)
 
   console.log('store 日期隔离与持久化')
   setActivePinia(createPinia())
@@ -111,6 +117,27 @@ async function main() {
   check('任务可完成', await store.toggleTask(taskId) && store.day?.tasks[0]?.done === true)
   check('任务可编辑', await store.updateTask(taskId, { title: '写周报（改）' }) && store.day?.tasks[0]?.title === '写周报（改）')
   check('任务可删除', await store.removeTask(taskId) && store.day?.tasks.length === 0)
+
+  const undoable = await store.addTask({ title: '撤销测试' })
+  check('新增后可撤销', !!undoable && store.canUndo)
+  check('撤销恢复新增前状态', await store.undo() && !store.day?.tasks.some((item) => item.title === '撤销测试'))
+  check('撤销后可重做', store.canRedo && await store.redo() && store.day?.tasks.some((item) => item.title === '撤销测试'))
+
+  const movable = await store.addTask({ title: '拖拽排期', startTime: '09:00', endTime: '10:00' })
+  check('时间块可拖拽移动', movable ? await store.moveTaskTime(movable.id, 600, 690) : false)
+  check('拖拽后分钟与显示时间一致', store.day?.tasks.find((task) => task.id === movable?.id)?.startTime === '10:00')
+  check('拖拽移动可撤销', await store.undo() && store.day?.tasks.find((task) => task.id === movable?.id)?.startTime === '09:00')
+
+  await db.dailyDays.clear()
+  await store.load('2026-10-26')
+  await store.addTask({ title: '跨日顺延撤销测试' })
+  await store.load('2026-10-27')
+  check('进入次日能发现昨日未完成', store.rolloverAvailable === 1)
+  check('顺延事务落库成功', await store.rolloverFromPrevious() === 1 && store.day?.tasks.length === 1)
+  check('撤销顺延同时恢复昨日原任务', await store.undo() && store.day?.tasks.length === 0 && store.rolloverAvailable === 1)
+  const restoredSource = await db.dailyDays.get('2026-10-26')
+  check('撤销后昨日任务不再是 ROLLED_OVER', restoredSource?.tasks[0]?.status === 'TODO')
+  check('重做顺延恢复今日副本', await store.redo() && store.day?.tasks[0]?.originTaskId !== null)
 
   console.log(failed > 0 ? `\n${failed} 项失败` : '\n全部通过')
   if (failed > 0) process.exit(1)

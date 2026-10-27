@@ -6,8 +6,8 @@
 import 'fake-indexeddb/auto'
 import { createPinia, setActivePinia } from 'pinia'
 import { db } from '../src/db'
-import { createTrip } from '../src/schema/trip'
-import { useTripsStore } from '../src/stores/trips'
+import { createTrip } from '../src/mods/mod-trip/schema'
+import { useTripsStore } from '../src/mods/mod-trip/store'
 
 let failed = 0
 function check(name: string, cond: boolean) {

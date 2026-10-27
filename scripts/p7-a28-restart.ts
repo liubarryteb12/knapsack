@@ -83,12 +83,25 @@ export async function runA28(rec: Recorder, outDir: string): Promise<void> {
 
     // ---- 真实动作 2：发布第 1 版、第 2 版（publishSnapshot） ----
     await openTab(cdp, '会话与发布', '发布第 1 版')
-    await cdp.clickMatch('^发布第 1 版$')
+    ev.promptStub = await cdp.evalJson<Record<string, unknown>>(
+      "(() => { window.__p7PromptCalls = []; window.__p7PromptOriginal = window.prompt; window.prompt = (message) => { window.__p7PromptCalls.push(String(message)); return window.__p7PromptCalls.length === 1 ? 'P7 发布说明第 1 版' : 'P7 发布说明第 2 版'; }; return JSON.stringify({ ok: true }); })()",
+    )
+    const publish1Clicked = await cdp.clickMatch('^发布第 1 版$')
+    requireTrue(publish1Clicked, '找不到「发布第 1 版」按钮')
     requireTrue(await cdp.waitForText('已发布第 1 版', 20_000), '发布第 1 版未成功')
     await sleep(1000)
-    await cdp.clickMatch('^发布第 2 版$')
+    const publish2Clicked = await cdp.clickMatch('^发布第 2 版$')
+    requireTrue(publish2Clicked, '找不到「发布第 2 版」按钮')
     requireTrue(await cdp.waitForText('已发布第 2 版', 20_000), '发布第 2 版未成功')
     await sleep(1200)
+    const promptCalls = await cdp.evalJson<{ calls: string[] }>(
+      "(() => { const calls = window.__p7PromptCalls || []; window.prompt = window.__p7PromptOriginal; delete window.__p7PromptOriginal; return JSON.stringify({ calls }); })()",
+    )
+    ev.promptCalls = promptCalls.calls
+    requireTrue(
+      promptCalls.calls.length === 2 && promptCalls.calls.every((text) => text.indexOf('发布说明') >= 0),
+      '两次发布都应先询问发布说明，实际 ' + JSON.stringify(promptCalls.calls),
+    )
 
     const beforeRestart = teamSnapshot(await readState(cdp), ORG_TEAM_ID)
     ev.beforeRestart = beforeRestart

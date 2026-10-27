@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { NSwitch, NInput, NButton, NCard, NForm, NFormItem, NSelect, NRadioGroup, NRadioButton, useMessage } from 'naive-ui'
-import { useTripsStore } from '../stores/trips'
+import { NSwitch, NInput, NButton, NCard, NForm, NFormItem, NSelect, NRadioGroup, NRadioButton, NAlert, NPopconfirm, useMessage } from 'naive-ui'
+import { Download, Upload } from '@lucide/vue'
+import { useTripsStore } from '../mods/mod-trip/store'
 import { loadAiConfigWithKey, saveAiConfig, testAiConnection, fetchModelList, type AiConfig } from '../utils/aiConfig'
 import { useThemeStore, type ThemeMode } from '../stores/theme'
 import UiPageHeader from '../components/ui/UiPageHeader.vue'
-import { MOD_MANIFESTS, modState, setModEnabled } from '../core/modRegistry'
+import { MOD_MANIFESTS, modRegistry } from '../core/bootMods'
+import type { ModId } from '../core/modRegistry'
+import { BackupCenter, type KnapsackBackup } from '../core/backupCenter'
+import { db } from '../db'
 import { usePagedList } from '../composables/usePagedList'
 
 const tripsStore = useTripsStore()
@@ -32,6 +36,77 @@ const testing = ref(false)
 const testResult = ref('')
 const testOk = ref(false)
 const message = useMessage()
+const togglingMod = ref<ModId | null>(null)
+const backupInput = ref<HTMLInputElement | null>(null)
+const pendingBackup = ref<KnapsackBackup | null>(null)
+const pendingBackupName = ref('')
+const restoringBackup = ref(false)
+const backupCenter = new BackupCenter(db, MOD_MANIFESTS, async (state) => {
+  for (const manifest of MOD_MANIFESTS) {
+    const enabled = state[manifest.id]
+    if (typeof enabled === 'boolean' && modRegistry.isEnabled(manifest.id) !== enabled) {
+      await modRegistry.setEnabled(manifest.id, enabled)
+    }
+  }
+})
+
+async function toggleMod(id: ModId, enabled: boolean) {
+  togglingMod.value = id
+  try {
+    await modRegistry.setEnabled(id, enabled)
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : String(e))
+  } finally {
+    if (togglingMod.value === id) togglingMod.value = null
+  }
+}
+
+async function exportBackup() {
+  try {
+    const backup = await backupCenter.exportBackup({ ...modRegistry.state })
+    const blob = new Blob([BackupCenter.stringify(backup)], {
+      type: 'application/json;charset=utf-8',
+    })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `knapsack-backup-${new Date().toISOString().slice(0, 10)}.knapsack-backup.json`
+    anchor.click()
+    URL.revokeObjectURL(url)
+    message.success('备份已导出')
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : String(e))
+  }
+}
+
+async function chooseBackup(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  try {
+    pendingBackup.value = BackupCenter.parse(await file.text())
+    pendingBackupName.value = file.name
+  } catch (e) {
+    pendingBackup.value = null
+    message.error(e instanceof Error ? e.message : String(e))
+  }
+}
+
+async function restoreBackup() {
+  if (!pendingBackup.value) return
+  restoringBackup.value = true
+  try {
+    await backupCenter.importBackup(pendingBackup.value)
+    pendingBackup.value = null
+    pendingBackupName.value = ''
+    message.success('备份已恢复')
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : String(e))
+  } finally {
+    restoringBackup.value = false
+  }
+}
 
 /** 内置候选模型；从接口拉到真实列表后会与之合并 */
 const BUILTIN_MODELS = [
@@ -121,8 +196,51 @@ const {
           <strong>{{ mod.name }}</strong>
           <span class="muted small">{{ mod.description }}</span>
         </div>
-        <n-switch :value="modState[mod.id]" size="small" @update:value="(v: boolean) => setModEnabled(mod.id, v)" />
+        <n-switch
+          :value="modRegistry.state[mod.id]"
+          :loading="togglingMod === mod.id"
+          size="small"
+          @update:value="(v: boolean) => toggleMod(mod.id, v)"
+        />
       </div>
+    </n-card>
+
+    <n-card size="small" class="section" title="本地备份">
+      <p class="muted small">
+        导出所有卡带的 Manifest 声明表与模块开关。凭证明文字段会被排除，恢复团队后需要重新配对。
+      </p>
+      <div class="backup-actions">
+        <n-button @click="exportBackup">
+          <template #icon><Download :size="15" /></template>
+          导出备份
+        </n-button>
+        <n-button @click="backupInput?.click()">
+          <template #icon><Upload :size="15" /></template>
+          选择备份
+        </n-button>
+        <input
+          ref="backupInput"
+          class="hidden-input"
+          type="file"
+          accept=".json,.knapsack-backup.json"
+          @change="chooseBackup"
+        />
+      </div>
+      <n-alert v-if="pendingBackup" type="warning" :bordered="false" class="backup-preview">
+        已读取 {{ pendingBackupName }}，恢复会替换全部卡带数据。
+        <span v-if="pendingBackup.warnings.length > 0">
+          {{ pendingBackup.warnings.join('；') }}
+        </span>
+        <div class="backup-confirm">
+          <n-button size="small" @click="pendingBackup = null">取消</n-button>
+          <n-popconfirm @positive-click="restoreBackup">
+            <template #trigger>
+              <n-button size="small" type="warning" :loading="restoringBackup">确认恢复</n-button>
+            </template>
+            恢复会覆盖当前全部卡带数据，确定继续？
+          </n-popconfirm>
+        </div>
+      </n-alert>
     </n-card>
 
     <n-card size="small" class="section" title="模块开关（按旅行）">
@@ -305,6 +423,27 @@ const {
 
 .test-result.ok {
   color: var(--app-success);
+}
+
+.backup-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.backup-preview {
+  margin-top: var(--space-3);
+}
+
+.backup-confirm {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.hidden-input {
+  display: none;
 }
 
 .muted {

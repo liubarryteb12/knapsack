@@ -1,12 +1,25 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { NConfigProvider, NMessageProvider, NGlobalStyle, zhCN, dateZhCN, darkTheme, type GlobalThemeOverrides } from 'naive-ui'
-import { RouterLink, RouterView } from 'vue-router'
-import { CalendarDays, Map, Settings, Backpack, Users, Wallet } from '@lucide/vue'
+import { RouterLink, RouterView, useRoute } from 'vue-router'
+import { Settings, Backpack } from '@lucide/vue'
 import { useThemeStore } from './stores/theme'
-import { modState } from './core/modRegistry'
+import { modRegistry } from './core/bootMods'
+import ModSlot from './core/components/ModSlot.vue'
 
 const theme = useThemeStore()
+const route = useRoute()
+const navItems = computed(() => modRegistry.enabledNavItems)
+
+function hasActivePath(item: { activePaths?: readonly string[] }): boolean {
+  return item.activePaths?.some(
+    (path) => route.path === path || route.path.startsWith(`${path}/`),
+  ) ?? false
+}
+
+onMounted(() => {
+  void modRegistry.initialize()
+})
 
 /** Naive UI 主色统一为应用靛蓝：之前主按钮是默认绿，和页面 accent 打架 */
 const themeOverrides = computed<GlobalThemeOverrides>(() => ({
@@ -32,28 +45,25 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => ({
             <span class="app-logo-text">行囊</span>
           </div>
           <nav class="app-nav">
-            <RouterLink v-if="modState.trip" class="app-nav-item" to="/" exact-active-class="router-link-active">
-              <span class="app-nav-icon"><Map :size="19" :stroke-width="2" /></span>
-              <span>旅行</span>
-            </RouterLink>
-            <RouterLink v-if="modState.daily" class="app-nav-item" to="/daily" exact-active-class="router-link-active">
-              <span class="app-nav-icon"><CalendarDays :size="19" :stroke-width="2" /></span>
-              <span>每日</span>
-            </RouterLink>
-            <RouterLink v-if="modState.finance" class="app-nav-item" to="/finance" exact-active-class="router-link-active">
-              <span class="app-nav-icon"><Wallet :size="19" :stroke-width="2" /></span>
-              <span>账房</span>
-            </RouterLink>
-            <RouterLink v-if="modState.trip" class="app-nav-item" to="/teams" exact-active-class="router-link-active">
-              <span class="app-nav-icon"><Users :size="19" :stroke-width="2" /></span>
-              <span>团队</span>
+            <RouterLink
+              v-for="item in navItems"
+              :key="item.modId + item.to"
+              class="app-nav-item"
+              :class="{ 'router-link-active': hasActivePath(item) }"
+              :to="item.to"
+              exact-active-class="router-link-active"
+            >
+              <span class="app-nav-icon">
+                <component :is="item.icon" :size="19" :stroke-width="2" />
+              </span>
+              <span>{{ item.label }}</span>
             </RouterLink>
             <RouterLink class="app-nav-item" to="/settings" exact-active-class="router-link-active">
               <span class="app-nav-icon"><Settings :size="19" :stroke-width="2" /></span>
               <span>设置</span>
             </RouterLink>
           </nav>
-          <p class="app-version">v1.1.2</p>
+          <p class="app-version">v1.3.0</p>
         </aside>
         <main class="app-main">
           <RouterView v-slot="{ Component }">
@@ -62,6 +72,9 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => ({
             </Transition>
           </RouterView>
         </main>
+        <div class="app-quick-slot">
+          <ModSlot name="host:quick-action" />
+        </div>
       </div>
     </n-message-provider>
   </n-config-provider>
@@ -171,6 +184,10 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => ({
   transition: background-color var(--dur-normal) var(--ease);
 }
 
+.app-quick-slot {
+  display: contents;
+}
+
 /* 路由切换过渡 */
 .page-enter-active,
 .page-leave-active {
@@ -190,10 +207,11 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => ({
 /* 窄屏（手机 / 安卓 APK）：侧边栏改为底部导航 */
 @media (max-width: 720px) {
   .app-shell {
-    flex-direction: column-reverse;
+    flex-direction: column;
   }
 
   .app-sidebar {
+    order: 3;
     width: 100%;
     flex-direction: row;
     align-items: center;
@@ -203,6 +221,25 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => ({
     padding: var(--space-1) var(--space-2);
     padding-bottom: calc(var(--space-1) + env(safe-area-inset-bottom));
     gap: var(--space-1);
+  }
+
+  .app-main {
+    order: 1;
+  }
+
+  .app-quick-slot {
+    order: 2;
+    flex: 0 0 auto;
+    display: flex;
+    justify-content: flex-end;
+    min-height: 44px;
+    padding: 4px 14px;
+    border-top: 1px solid var(--app-border);
+    background: var(--app-nav-bg);
+  }
+
+  .app-quick-slot:empty {
+    display: none;
   }
 
   .app-logo,

@@ -6,7 +6,7 @@
 import 'fake-indexeddb/auto'
 import { db } from '../src/db'
 import { createTrip } from '../src/schema/trip'
-import { toTripSummary } from '../src/core/tripSummary'
+import { toTripSummary } from '../src/mods/mod-trip/tripSummary'
 
 function bytes(value: unknown): number {
   return JSON.stringify(value).length

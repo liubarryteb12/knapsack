@@ -1,5 +1,5 @@
 /**
- * P7 单机验收总编排（只连一台设备 3a3e1f52 时能做的项）
+ * P7 单机验收总编排（默认 Redmi K20 Pro 69b31964，可用 P7_DEVICE 覆盖）
  *
  * 用法：
  *   npx tsx scripts/p7-device-single.ts                 # 跑全部（A28 A22 A30 A34 A35 E19）

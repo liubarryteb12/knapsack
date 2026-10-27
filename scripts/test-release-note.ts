@@ -1,7 +1,7 @@
 // 细节 A 验证：发布说明的序列化/校验/边界
-import { publicSnapshotSchema } from '../src/team/schema'
-import { buildPublicSnapshot, digestOf } from '../src/team/domain'
-import { teamStateSchema } from '../src/team/schema'
+import { publicSnapshotSchema } from '../src/mods/mod-team/domain/schema'
+import { buildPublicSnapshot, digestOf } from '../src/mods/mod-team/domain/domain'
+import { teamStateSchema } from '../src/mods/mod-team/domain/schema'
 
 let failed = 0
 function check(name: string, cond: boolean) {
