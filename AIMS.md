@@ -37,7 +37,7 @@
 | **Mod 03** | **日常账房 (Finance)** | 每日花费速记、资金消费趋势、**消费成分结构分析**（联动旅行账单） | 🟢 Phase 3 核心完成 |
 | **Mod 04** | **提示词库 (Prompts)** | 三态提示词、变量 Runner、词块字典、四维筛选、缩略图与全局速存 | 🟢 核心完成 |
 | **Mod 05** | **团队分享 (TeamShare)** | 通用群组、跨模块数据包装箱、分片二维码收发、版本 Diff 审核 | 🟢 Phase 5 已验收 |
-| **Mod 07** | **目标系统 (Goals)** | 想法池、目标树（目标→里程碑→任务→周期）、两轮 AI 拆解、`goal-pack.v1` 外部导入 | 🟢 代码完成（待人工验收）（[spec](docs/GOALS_MODULE_SPEC.md) / [计划](docs/GOALS_IMPLEMENTATION_PLAN.md)） |
+| **Mod 07** | **目标系统 (Goals)** | 想法池、目标树（目标→里程碑→任务→周期）、两轮 AI 拆解、`goal-pack.v1` 外部导入 | 🟢 真机验收通过（[spec](docs/GOALS_MODULE_SPEC.md) / [计划](docs/GOALS_IMPLEMENTATION_PLAN.md)） |
 | **Mod 06+** | **扩展插槽 (Slot X)** | 新卡带只需独立目录与 `manifest.ts`，自动进入路由、导航、设置和备份 | 🟢 架构就绪 |
 | **Release 1.1.0** | **候选版发布门禁** | P0/P1 清零、边界核验、发布说明、已知问题、双端安装包 | 🟢 候选版门禁通过（待试用反馈） |
 | **v1.1.x Performance** | **性能与精简迭代** | 路由拆包、窗口查询、旅行摘要列表、低频组件延迟加载、职责审计 | 🟢 v1.1.2 已验收 |
@@ -187,7 +187,9 @@
 
 ### 10.4 进度台账
 
-代码提交：`29ca51d`（feat(goals): Mod 07 目标系统）。
+代码提交：`29ca51d`（feat(goals): Mod 07 目标系统）、`0e4c397`（提示词注入今天日期）。
+
+环境备注（2026-11-19）：本机 Rust 稳定版 1.99 无法编译 `memchr 2.8.3`（stdarch 内在函数变更），临时用 rustup 安装的 1.90 绕过；本机没有 MSVC 与 Windows SDK，`link.exe` 被 Git Bash 的 `link` 抢占，Windows 桌面构建与安装包暂时无法在本机复现。Android 侧 Gradle 发行包缺失 jar、`JAVA_HOME` 指向 JDK 17 而工程要求 Java 21，均已就地修复。
 
 | 任务编号 | 任务名称 | 状态 | 证据 |
 |---|---|---|---|
@@ -199,4 +201,4 @@
 | **G5** | `goal-pack` 导入管线 | 🟢 完成 | 导入 9 条断言通过；浏览器实测粘贴→预览→入库→重复包提示 |
 | **G6** | 两轮 AI 拆解向导 | 🟢 完成 | 两轮协议、回喂重试、中断、草稿恢复；真实 API 两轮联调通过（澄清 5 问 → 5 里程碑）；修复相对日期缺少「今天」基准的缺陷 |
 | **G7** | `knapsack-goal` skill | 🟢 完成 | `skills/knapsack-goal` 已安装到 `~/.claude/skills` |
-| **G8** | 回归、文档与验收 | 🟢 自动门禁通过 | `npm test` 40 文件 0 失败；`audit:boundary` 13/13；`audit:modules` 通过；build 通过；浏览器实测创建→晋级→拆解→刷新持久化；真机与真实 API 联调待做 |
+| **G8** | 回归、文档与验收 | 🟢 完成 | `npm test` 40 文件 0 失败；`audit:boundary` 13/13；`audit:modules` 通过；build 通过；浏览器实测创建→晋级→拆解→刷新持久化；Android 真机（Redmi K20 Pro M2012K11AC / Android 13 / 1.3.2 (8)）实测导入→预览→入库→强杀重启后仍在→重复包提示→本地状态不被覆盖 |
