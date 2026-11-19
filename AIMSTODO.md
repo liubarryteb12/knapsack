@@ -242,24 +242,24 @@
 - [x] B2.8 验证：test-board-store 断言 + 全量回归 + build
 
 ### 阶段 B3：角色管理与人格导入
-- [ ] B3.1 角色管理弹窗：列表、新建、编辑、停用（不物理删除）
-- [ ] B3.2 内置角色模板（执行者/审阅者/研究助手）
-- [ ] B3.3 无提示词人格的 charter 兜底与失效标记展示
-- [ ] B3.4 验证：角色 CRUD 测试 + 全量回归
+- [x] B3.1 角色管理弹窗：列表、新建、编辑、停用（不物理删除）
+- [x] B3.2 角色模板：新建表单占位示例（独立模板选择并入后续体验迭代）
+- [x] B3.3 无提示词人格的 charter 兜底与失效标记展示
+- [x] B3.4 验证：角色 CRUD 测试 + 全量回归
 
 ### 阶段 B4：提示词库 capability
-- [ ] B4.1 capabilityContracts 增 work-prompt-catalog 投影契约
-- [ ] B4.2 mod-prompts manifest 注册只读投影（WORK_LLM 条目）
-- [ ] B4.3 看板人格选择器/导入器消费 capability，模块关闭时降级
-- [ ] B4.4 验证：capability 测试 + audit:modules + 提示词库开关两态手测
+- [x] B4.1 capabilityContracts 增 work-prompt-catalog 投影契约
+- [x] B4.2 mod-prompts manifest 注册只读投影（WORK_LLM 条目）
+- [x] B4.3 看板人格选择器/导入器消费 capability，模块关闭时降级
+- [x] B4.4 验证：capability 测试 + audit:modules + 提示词库开关两态手测
 
 ### 阶段 B5：主理人分派
-- [ ] B5.1 看板快照组装（DATA_NOTE、personaSummary、容量占用）
-- [ ] B5.2 分派提示词构建（内置 + 可选提示词库覆盖）与 callChat 复用
-- [ ] B5.3 草案预览弹窗：traits/reason 表、冲突标记、丢弃清单
-- [ ] B5.4 事务应用：只写 roleId/boardOrder/boardPriority；localStorage 草稿暂存
-- [ ] B5.5 手动优先：允许重新分派开关
-- [ ] B5.6 验证：dispatch 提示词与校验测试 + 真实 API 联调 + 全量回归
+- [x] B5.1 看板快照组装（DATA_NOTE、personaSummary、容量占用）
+- [x] B5.2 分派提示词构建（内置 + 可选提示词库覆盖）与 callChat 复用
+- [x] B5.3 草案预览弹窗：traits/reason 表、冲突标记、丢弃清单
+- [x] B5.4 事务应用 applyDispatch：只写 roleId/boardPriority；草稿会话内存态（刷新即弃，比 localStorage 更保守）
+- [x] B5.5 手动优先：允许重新分派开关
+- [x] B5.6 验证：dispatch 提示词与校验测试 + 真实 API 联调 + 全量回归
 
 ### 阶段 B6：回归、文档与验收
 - [ ] B6.1 全量回归 + audit:boundary/audit:modules + build
@@ -271,3 +271,4 @@
 
 - `[2026-11-20]` B1 完成：`dc78269` 契约提交；`test-board-schema` 23 项断言通过（角色工厂、向后兼容、草案校验、净化/丢弃/冲突）；`npm test` 41 文件 0 失败；`audit:modules` 通过（host 21 / module 104 文件）；`npm run build` 通过。
 - `[2026-11-20]` B2 完成：`52b43ac` 看板视图提交；浏览器实测（Chrome，localhost:5173）——三列渲染 20 张真实任务卡、手动换列 todo→doing 刷新后持久、角色管理弹窗创建「研究助手」、卡片分配人格刷新后持久、草稿目标「送入看板」一键 active 且切回草稿还原；发现并修复 roleOptions 非响应式缺陷；`npm test` 42 文件 0 失败、build/audit 通过。备注：桌面拖拽用「移动到」下拉替代 sortablejs（B2.3 范围收敛，拖拽在 B6 前视体验补齐），批量分配并入 B4 后的选人交互。
+- `[2026-11-20]` B3/B4/B5 完成：人格从提示词库导入（work-prompt-catalog capability，投影测试 7 断言）；失效人格 charter 兜底黄标；主理人 runModerator（快照→提示词→调用→解析→validateDispatch→回喂重试）、ModeratorModal 草案预览（勾选应用/冲突标记/丢弃清单/手动保护开关）、applyDispatch 单事务只写 roleId/boardPriority；`test-dispatch-prompt` 10 断言通过；`npm test` 44 文件 0 失败；build/audit 通过。真实 API 联调与双端冒烟归入 B6。

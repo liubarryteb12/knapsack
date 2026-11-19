@@ -4,22 +4,20 @@ import { NButton, NSelect, NTag } from 'naive-ui'
 import { LayoutDashboard, Sparkles, Users } from '@lucide/vue'
 import TaskBoardCard from './TaskBoardCard.vue'
 import RoleManagerModal from './RoleManagerModal.vue'
+import ModeratorModal from './ModeratorModal.vue'
 import UiEmptyState from '../../../components/ui/UiEmptyState.vue'
 import { useGoalsStore } from '../store'
 import type { RoleTier, Task, TaskStatus } from '../schema'
 
 const store = useGoalsStore()
 
-const emit = defineEmits<{
-  'open-moderator': []
-  'go-create': []
-}>()
-
 const COLUMNS: Array<{ status: TaskStatus; label: string }> = [
   { status: 'todo', label: '待办' },
   { status: 'doing', label: '进行中' },
   { status: 'done', label: '已完成' },
 ]
+
+defineEmits<{ 'go-create': [] }>()
 
 const TIER_LABEL: Record<RoleTier, string> = {
   lead: '主责',
@@ -31,6 +29,7 @@ const filterGoalId = ref('')
 const filterRoleId = ref('')
 const groupBy = ref<'goal' | 'role'>('goal')
 const showRoles = ref(false)
+const moderatorShow = ref(false)
 
 const goalOptions = computed(() => [
   { label: '全部目标', value: '' },
@@ -48,6 +47,8 @@ const groupOptions = [
   { label: '按目标分组', value: 'goal' },
   { label: '按人格分组', value: 'role' },
 ]
+
+const moderatorModal = ref<InstanceType<typeof ModeratorModal> | null>(null)
 
 function tasksInColumn(status: TaskStatus): Task[] {
   return store.boardTasksByStatus(
@@ -119,7 +120,7 @@ async function onAssign(task: Task, roleId: string | null) {
         <template #icon><Users :size="14" /></template>
         管理人格
       </n-button>
-      <n-button size="small" type="primary" @click="emit('open-moderator')" :disabled="store.activeRoles.length === 0">
+      <n-button size="small" type="primary" @click="moderatorModal?.openMeeting()" :disabled="store.activeRoles.length === 0">
         <template #icon><Sparkles :size="14" /></template>
         主理人开会
       </n-button>
@@ -177,6 +178,7 @@ async function onAssign(task: Task, roleId: string | null) {
     </template>
 
     <RoleManagerModal v-model:show="showRoles" />
+    <ModeratorModal ref="moderatorModal" :show="moderatorShow" @update:show="moderatorShow = $event" />
   </div>
 </template>
 

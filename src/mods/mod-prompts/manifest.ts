@@ -1,6 +1,7 @@
 import { Sparkles } from '@lucide/vue'
 import { defineAsyncComponent } from 'vue'
 import type { ModManifest } from '../../core/modRegistry'
+import { WORK_PROMPT_CATALOG_TOPIC } from '../../core/capabilityContracts'
 import {
   SHAREABLE_PACKAGE_EXPORT_TOPIC,
   SHAREABLE_PACKAGE_IMPORT_TOPIC,
@@ -51,6 +52,10 @@ const manifest: ModManifest = {
   ],
   navItems: [{ label: '提示词', to: '/prompts', icon: Sparkles, order: 35 }],
   providesCapabilities: {
+    [WORK_PROMPT_CATALOG_TOPIC]: async () => {
+      const { listWorkPromptsForCatalog } = await import('./services/workPromptCatalogReader')
+      return listWorkPromptsForCatalog()
+    },
     [SHAREABLE_PACKAGE_EXPORT_TOPIC]: async (request) => {
       const { exportShareablePackages } = await import('./services/shareAdapter')
       return exportShareablePackages(request)

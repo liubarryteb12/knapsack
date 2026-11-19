@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { NButton, NInput, NModal, NSelect, useMessage } from 'naive-ui'
+import { modRegistry } from '../../../core/bootMods'
+import { WORK_PROMPT_CATALOG_TOPIC, type WorkPromptProjection } from '../../../core/capabilityContracts'
 import { useGoalsStore } from '../store'
 import type { BoardRole, RoleTier } from '../schema'
 
@@ -27,19 +29,74 @@ const TIER_LABEL: Record<RoleTier, string> = {
   helper: '辅助',
 }
 
-const editingId = ref('')
-const form = ref({ name: '', tier: 'specialist' as RoleTier, charter: '', maxDoing: 2 })
+// ---------- 提示词库人格目录（capability 只读；模块关闭时为空） ----------
+
+const catalog = ref<WorkPromptProjection[]>([])
+const catalogLoading = ref(false)
+const importPromptId = ref('')
 
 watch(
   () => props.show,
-  (open) => {
-    if (open) resetForm()
+  async (open) => {
+    if (open) {
+      resetForm()
+      await loadCatalog()
+    }
   },
 )
+
+async function loadCatalog() {
+  catalogLoading.value = true
+  try {
+    const values = await modRegistry.capabilities.query<WorkPromptProjection[]>(
+      WORK_PROMPT_CATALOG_TOPIC,
+    )
+    catalog.value = values.flat()
+  } catch {
+    catalog.value = []
+  } finally {
+    catalogLoading.value = false
+  }
+}
+
+const catalogOptions = computed(() =>
+  catalog.value.map((item) => ({ label: item.title, value: item.id })),
+)
+
+/** 从提示词库导入人格：标题作名称、systemRole 摘要作 charter 初稿 */
+async function importFromCatalog() {
+  const item = catalog.value.find((row) => row.id === importPromptId.value)
+  if (!item) return
+  const name = item.title.trim().slice(0, 40)
+  const charter = (item.systemRole.trim() || item.templateBody.trim()).slice(0, 200)
+  try {
+    await store.createRole({
+      name,
+      charter,
+      promptId: item.id,
+      promptTitle: item.title,
+    })
+    message.success(`已导入人格「${name}」`)
+    importPromptId.value = ''
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : String(error))
+  }
+}
+
+const editingId = ref('')
+const form = ref({ name: '', tier: 'specialist' as RoleTier, charter: '', maxDoing: 2 })
 
 function resetForm() {
   editingId.value = ''
   form.value = { name: '', tier: 'specialist', charter: '', maxDoing: 2 }
+}
+
+function charterOf(role: BoardRole): string {
+  return role.charter
+}
+
+function isOrphaned(role: BoardRole): boolean {
+  return !!role.promptId && !catalog.value.some((item) => item.id === role.promptId)
 }
 
 function startEdit(role: BoardRole) {
@@ -100,8 +157,21 @@ const maxDoingOptions = [1, 2, 3, 4, 5].map((value) => ({
 <template>
   <n-modal v-model:show="visible" preset="card" title="管理人格" style="max-width: 560px">
     <p class="roles-note">
-      人格是任务的执行角色。提示词库互通将在下一阶段接入，当前先用「职责说明」定义人格。
+      人格是任务的执行角色。可从提示词库导入（一个 WORK_LLM 条目 = 一个人格），或直接手写职责说明。
     </p>
+
+    <div v-if="catalogOptions.length > 0 || catalogLoading" class="roles-import">
+      <n-select
+        v-model:value="importPromptId"
+        :options="catalogOptions"
+        :loading="catalogLoading"
+        size="small"
+        placeholder="从提示词库选择一个「干工作」条目…"
+        filterable
+      />
+      <n-button size="small" :disabled="!importPromptId" @click="importFromCatalog">导入为人格</n-button>
+    </div>
+    <p v-else class="roles-import-empty">提示词库还没有「干工作」条目（或模块已关闭），可以先手写人格。</p>
 
     <div class="roles-list">
       <div v-for="role in store.roles" :key="role.id" class="roles-item" :class="{ 'roles-item-off': !role.active }">
@@ -109,15 +179,17 @@ const maxDoingOptions = [1, 2, 3, 4, 5].map((value) => ({
           <strong>{{ role.name }}</strong>
           <n-tag size="tiny" :bordered="false">{{ TIER_LABEL[role.tier] }}</n-tag>
           <n-tag size="tiny" :bordered="false">同时 {{ role.maxDoing }}</n-tag>
+          <n-tag v-if="role.promptId && !isOrphaned(role)" size="tiny" type="info" :bordered="false">来自提示词库</n-tag>
+          <span v-if="isOrphaned(role)" class="roles-item-warning">提示词已失效，按职责说明兜底</span>
           <span v-if="!role.active" class="roles-item-off-label">已停用</span>
         </div>
-        <p v-if="role.charter" class="roles-item-charter">{{ role.charter }}</p>
+        <p v-if="charterOf(role)" class="roles-item-charter">{{ charterOf(role) }}</p>
         <div v-if="role.active" class="roles-item-actions">
           <n-button size="tiny" @click="startEdit(role)">编辑</n-button>
           <n-button size="tiny" quaternary @click="deactivate(role)">停用</n-button>
         </div>
       </div>
-      <p v-if="store.roles.length === 0" class="roles-empty">还没有人格。先建一个，例如「研究助手」。</p>
+      <p v-if="store.roles.length === 0" class="roles-empty">还没有人格。从提示词库导入，或手写一个。</p>
     </div>
 
     <div class="roles-form">
@@ -147,6 +219,23 @@ const maxDoingOptions = [1, 2, 3, 4, 5].map((value) => ({
 .roles-note {
   margin: 0 0 var(--space-3);
   color: var(--app-muted);
+  font-size: var(--text-xs);
+}
+
+.roles-import {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.roles-import-empty {
+  margin: 0 0 var(--space-3);
+  color: var(--app-faint);
+  font-size: var(--text-xs);
+}
+
+.roles-item-warning {
+  color: var(--app-warning);
   font-size: var(--text-xs);
 }
 

@@ -422,5 +422,25 @@ export const useGoalsStore = defineStore('goals', {
       const map = new Map(updates.map((task) => [task.id, task]))
       this.tasks = this.tasks.map((task) => map.get(task.id) ?? task)
     },
+
+    /** 主理人草案应用：单事务只写 roleId / boardPriority，永不改 status */
+    async applyDispatch(assignments: Array<{ taskId: string; roleId: string; priority?: 1 | 2 | 3 }>): Promise<void> {
+      const updates: Task[] = []
+      for (const item of assignments) {
+        const task = this.tasks.find((t) => t.id === item.taskId)
+        if (!task) continue
+        updates.push({
+          ...task,
+          roleId: item.roleId,
+          boardPriority: item.priority ?? task.boardPriority ?? 2,
+        })
+      }
+      if (updates.length === 0) return
+      await db.transaction('rw', tasksTable(), async () => {
+        await tasksTable().bulkPut(plain(updates))
+      })
+      const map = new Map(updates.map((task) => [task.id, task]))
+      this.tasks = this.tasks.map((task) => map.get(task.id) ?? task)
+    },
   },
 })
