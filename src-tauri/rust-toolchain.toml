@@ -1,0 +1,4 @@
+[toolchain]
+# 1.99 的 stdarch 把 x86 内在函数改成固有方法，memchr 2.8.3 无法编译；
+# 1.90 是目前验证可用的稳定版本。升级前先用 `cargo build` 验证 memchr 能过。
+channel = "1.90.0"

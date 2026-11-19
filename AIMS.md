@@ -189,7 +189,7 @@
 
 代码提交：`29ca51d`（feat(goals): Mod 07 目标系统）、`0e4c397`（提示词注入今天日期）。
 
-环境备注（2026-11-19）：本机 Rust 稳定版 1.99 无法编译 `memchr 2.8.3`（stdarch 内在函数变更），临时用 rustup 安装的 1.90 绕过；本机没有 MSVC 与 Windows SDK，`link.exe` 被 Git Bash 的 `link` 抢占，Windows 桌面构建与安装包暂时无法在本机复现。Android 侧 Gradle 发行包缺失 jar、`JAVA_HOME` 指向 JDK 17 而工程要求 Java 21，均已就地修复。
+环境备注（2026-11-19）：本机 Rust 稳定版 1.99 无法编译 `memchr 2.8.3`（stdarch 内在函数变更），已在 `src-tauri/rust-toolchain.toml` 钉 1.90.0。本机原本没有 MSVC 与 Windows SDK，现已装 VS Build Tools 2022（`E:\VS\BuildTools`，C++ 生成工具 + Windows SDK 10.0.26100），Rust 可自动定位 `link.exe`，`npx tauri build --debug --no-bundle` 本机通过。Android 侧 Gradle 发行包缺失 jar、`JAVA_HOME` 指向 JDK 17 而工程要求 Java 21，均已就地修复。
 
 | 任务编号 | 任务名称 | 状态 | 证据 |
 |---|---|---|---|
@@ -201,4 +201,4 @@
 | **G5** | `goal-pack` 导入管线 | 🟢 完成 | 导入 9 条断言通过；浏览器实测粘贴→预览→入库→重复包提示 |
 | **G6** | 两轮 AI 拆解向导 | 🟢 完成 | 两轮协议、回喂重试、中断、草稿恢复；真实 API 两轮联调通过（澄清 5 问 → 5 里程碑）；修复相对日期缺少「今天」基准的缺陷 |
 | **G7** | `knapsack-goal` skill | 🟢 完成 | `skills/knapsack-goal` 已安装到 `~/.claude/skills` |
-| **G8** | 回归、文档与验收 | 🟢 完成 | `npm test` 40 文件 0 失败；`audit:boundary` 13/13；`audit:modules` 通过；build 通过；浏览器实测创建→晋级→拆解→刷新持久化；Android 真机（Redmi K20 Pro M2012K11AC / Android 13 / 1.3.2 (8)）实测导入→预览→入库→强杀重启后仍在→重复包提示→本地状态不被覆盖 |
+| **G8** | 回归、文档与验收 | 🟢 完成 | `npm test` 40 文件 0 失败；`audit:boundary` 13/13；`audit:modules` 通过；build 通过；浏览器实测创建→晋级→拆解→刷新持久化；Android 真机（Redmi K20 Pro M2012K11AC / Android 13 / 1.3.2 (8)）实测导入→预览→入库→强杀重启后仍在→重复包提示→本地状态不被覆盖；Windows 桌面（Tauri debug，WebView2）实测同一链路通过 |
