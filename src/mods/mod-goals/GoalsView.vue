@@ -16,6 +16,7 @@ import UiPageHeader from '../../components/ui/UiPageHeader.vue'
 import { useGoalsStore } from './store'
 import type { Idea } from './schema'
 import CycleBoard from './components/CycleBoard.vue'
+import BoardView from './components/BoardView.vue'
 import AiWizardModal from './components/AiWizardModal.vue'
 import ImportPackModal from './components/ImportPackModal.vue'
 import GoalCard from './components/GoalCard.vue'
@@ -25,7 +26,7 @@ const store = useGoalsStore()
 const router = useRouter()
 const message = useMessage()
 
-const activeTab = ref<'goals' | 'ideas' | 'cycles'>('goals')
+const activeTab = ref<'goals' | 'ideas' | 'cycles' | 'board'>('goals')
 const showCreate = ref(false)
 const showImport = ref(false)
 const showAi = ref(false)
@@ -111,6 +112,16 @@ function onAiImported() {
   const firstGoal = store.goalsSorted[0]
   if (firstGoal) open(firstGoal.id)
 }
+
+async function sendToBoard(goalId: string) {
+  try {
+    await store.updateGoal(goalId, { status: 'active' })
+    message.success('已送入看板')
+    activeTab.value = 'board'
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : String(error))
+  }
+}
 </script>
 
 <template>
@@ -151,6 +162,7 @@ function onAiImported() {
             :milestone-count="store.milestonesOf(goal.id).length"
             :task-count="store.milestonesOf(goal.id).reduce((sum, m) => sum + store.tasksOf(m.id).length, 0)"
             @open="open(goal.id)"
+            @send-to-board="sendToBoard(goal.id)"
           />
         </div>
       </n-tab-pane>
@@ -168,6 +180,10 @@ function onAiImported() {
           </div>
           <CycleBoard v-if="cycleGoalId" :goal-id="cycleGoalId" />
         </template>
+      </n-tab-pane>
+
+      <n-tab-pane name="board" tab="看板">
+        <BoardView @go-create="showCreate = true" />
       </n-tab-pane>
     </n-tabs>
 

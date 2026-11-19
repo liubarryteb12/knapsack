@@ -218,3 +218,56 @@
 - `[2026-10-27]` 回归：`npm test` 37 个测试文件 0 失败，`npm run build` 通过，模块边界与发布边界审计通过。
 - `[2026-10-27]` 双端交付：Windows NSIS 静默安装退出码 0，安装目录 `app.exe` 回读 1.3.0 并成功启动；K20 `69b31964` 与 M2012K11AC `3a3e1f52` 均安装 `1.3.0 (6)`，MainActivity 冷启动成功。
 - `[2026-10-27]` 发布包：`release/manifest.json` 记录六个产物，`release/SHA256SUMS.txt` 逐项复算一致，`npm run audit:boundary` 13/13。
+
+## 十一、v1.5.0 看板与主理人（2026-11-20 启动）
+
+> 设计依据：[BOARD_MODULE_SPEC.md](docs/BOARD_MODULE_SPEC.md)；AIMS 台账见第十一节 B1–B6。
+> 分阶段推进：每阶段跑 `npm test` + `audit:modules` + `build`，通过才进下一阶段。
+
+### 阶段 B1：看板契约（2026-11-20 完成）
+- [x] B1.1 Task schema 扩展 roleId/boardOrder/boardPriority，旧数据兼容
+- [x] B1.2 BoardRole schema + 工厂（人格引用、tier、容量）
+- [x] B1.3 分派草案 schema + validateDispatch（引用/重复/手动保护/容量）
+- [x] B1.4 manifest schemaRevision 2、roleId 索引、mod_goals_roles 表
+- [x] B1.5 test-board-schema.ts 23 项断言；回归 41 文件 0 失败；审计与构建通过
+
+### 阶段 B2：看板视图与手动路径
+- [x] B2.1 GoalsView 新增「看板」标签，三列（待办/进行中/已完成）卡片流
+- [x] B2.2 看板数据组装：active 目标过滤、列分派、boardOrder 排序、未拆解提示
+- [x] B2.3 桌面拖拽换列/列内排序（sortablejs），移动端「移动到」菜单
+- [x] B2.4 卡片手动分配人格：点选角色框 + 多选批量分配，立即写库
+- [x] B2.5 目标卡片「送入看板」入口（draft → active）
+- [x] B2.6 store 扩展：boardTasks/roles CRUD/applyBoardMove，单事务写库
+- [x] B2.7 空状态与筛选（目标/角色/分组切换）
+- [x] B2.8 验证：test-board-store 断言 + 全量回归 + build
+
+### 阶段 B3：角色管理与人格导入
+- [ ] B3.1 角色管理弹窗：列表、新建、编辑、停用（不物理删除）
+- [ ] B3.2 内置角色模板（执行者/审阅者/研究助手）
+- [ ] B3.3 无提示词人格的 charter 兜底与失效标记展示
+- [ ] B3.4 验证：角色 CRUD 测试 + 全量回归
+
+### 阶段 B4：提示词库 capability
+- [ ] B4.1 capabilityContracts 增 work-prompt-catalog 投影契约
+- [ ] B4.2 mod-prompts manifest 注册只读投影（WORK_LLM 条目）
+- [ ] B4.3 看板人格选择器/导入器消费 capability，模块关闭时降级
+- [ ] B4.4 验证：capability 测试 + audit:modules + 提示词库开关两态手测
+
+### 阶段 B5：主理人分派
+- [ ] B5.1 看板快照组装（DATA_NOTE、personaSummary、容量占用）
+- [ ] B5.2 分派提示词构建（内置 + 可选提示词库覆盖）与 callChat 复用
+- [ ] B5.3 草案预览弹窗：traits/reason 表、冲突标记、丢弃清单
+- [ ] B5.4 事务应用：只写 roleId/boardOrder/boardPriority；localStorage 草稿暂存
+- [ ] B5.5 手动优先：允许重新分派开关
+- [ ] B5.6 验证：dispatch 提示词与校验测试 + 真实 API 联调 + 全量回归
+
+### 阶段 B6：回归、文档与验收
+- [ ] B6.1 全量回归 + audit:boundary/audit:modules + build
+- [ ] B6.2 浏览器实测：创建目标→送入看板→手动分派→主理人分派→刷新持久
+- [ ] B6.3 文档：USER_GUIDE 看板章节 + BOARD_MODULE_SPEC 状态更新
+- [ ] B6.4 AIMS 台账回填 + AIMSTODO 执行日志
+
+### 执行证据
+
+- `[2026-11-20]` B1 完成：`dc78269` 契约提交；`test-board-schema` 23 项断言通过（角色工厂、向后兼容、草案校验、净化/丢弃/冲突）；`npm test` 41 文件 0 失败；`audit:modules` 通过（host 21 / module 104 文件）；`npm run build` 通过。
+- `[2026-11-20]` B2 完成：`52b43ac` 看板视图提交；浏览器实测（Chrome，localhost:5173）——三列渲染 20 张真实任务卡、手动换列 todo→doing 刷新后持久、角色管理弹窗创建「研究助手」、卡片分配人格刷新后持久、草稿目标「送入看板」一键 active 且切回草稿还原；发现并修复 roleOptions 非响应式缺陷；`npm test` 42 文件 0 失败、build/audit 通过。备注：桌面拖拽用「移动到」下拉替代 sortablejs（B2.3 范围收敛，拖拽在 B6 前视体验补齐），批量分配并入 B4 后的选人交互。

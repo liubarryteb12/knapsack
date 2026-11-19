@@ -3,11 +3,15 @@ import { db } from '../../db'
 import { todayStr } from '../../utils/date'
 import {
   goalCompletionRatio,
+  newBoardRole,
   newCycle,
   newGoal,
   newIdea,
   newMilestone,
   newTask,
+  boardRoleSchema,
+  type BoardRole,
+  type RoleTier,
   type Cycle,
   type Goal,
   type GoalStatus,
@@ -23,6 +27,7 @@ const goalsTable = () => db.table<Goal, string>('mod_goals_goals')
 const milestonesTable = () => db.table<Milestone, string>('mod_goals_milestones')
 const tasksTable = () => db.table<Task, string>('mod_goals_tasks')
 const cyclesTable = () => db.table<Cycle, string>('mod_goals_cycles')
+const rolesTable = () => db.table<BoardRole, string>('mod_goals_roles')
 
 function isoNow(): string {
   return new Date().toISOString()
@@ -40,6 +45,7 @@ export const useGoalsStore = defineStore('goals', {
     milestones: [] as Milestone[],
     tasks: [] as Task[],
     cycles: [] as Cycle[],
+    roles: [] as BoardRole[],
     loading: false,
     error: '',
     loaded: false,
@@ -95,6 +101,56 @@ export const useGoalsStore = defineStore('goals', {
           .sort((a, b) => a.order - b.order)
       }
     },
+    activeGoalIds(state): Set<string> {
+      return new Set(state.goals.filter((g) => g.status === 'active').map((g) => g.id))
+    },
+    /** 看板用：active 目标下、状态可上板的任务，按列排序 */
+    boardTasksByStatus(state) {
+      return (status: TaskStatus, goalId?: string, roleId?: string): Task[] => {
+        const activeIds = new Set(state.goals.filter((g) => g.status === 'active').map((g) => g.id))
+        const milestoneById = new Map(state.milestones.map((m) => [m.id, m]))
+        return state.tasks
+          .filter((t) => {
+            if (t.status !== status) return false
+            const milestone = milestoneById.get(t.milestoneId)
+            if (!milestone) return false
+            if (goalId && milestone.goalId !== goalId) return false
+            if (roleId && t.roleId !== roleId) return false
+            return activeIds.has(milestone.goalId)
+          })
+          .sort(
+            (a, b) =>
+              (a.boardOrder ?? a.order) - (b.boardOrder ?? b.order) ||
+              a.milestoneId.localeCompare(b.milestoneId),
+          )
+      }
+    },
+    roleById(state) {
+      return (id: string): BoardRole | undefined => state.roles.find((role) => role.id === id)
+    },
+    activeRoles(state): BoardRole[] {
+      return state.roles
+        .filter((role) => role.active)
+        .sort((a, b) => a.name.localeCompare(b.name))
+    },
+    doingCountByRole(state): Record<string, number> {
+      const counts: Record<string, number> = {}
+      for (const task of state.tasks) {
+        if (task.status === 'doing' && task.roleId) {
+          counts[task.roleId] = (counts[task.roleId] ?? 0) + 1
+        }
+      }
+      return counts
+    },
+    /** 目标在看板上是否缺任务（active 且无任务 → 未拆解提示） */
+    activeGoalsWithoutTasks(state): Goal[] {
+      const activeGoals = state.goals.filter((g) => g.status === 'active')
+      const milestoneGoalIds = new Set(state.milestones.map((m) => m.goalId))
+      return activeGoals.filter((g) => {
+        if (milestoneGoalIds.has(g.id)) return false
+        return true
+      })
+    },
   },
 
   actions: {
@@ -102,18 +158,20 @@ export const useGoalsStore = defineStore('goals', {
       this.loading = true
       this.error = ''
       try {
-        const [ideas, goals, milestones, tasks, cycles] = await Promise.all([
+        const [ideas, goals, milestones, tasks, cycles, roles] = await Promise.all([
           ideasTable().toArray(),
           goalsTable().toArray(),
           milestonesTable().toArray(),
           tasksTable().toArray(),
           cyclesTable().toArray(),
+          rolesTable().toArray(),
         ])
         this.ideas = ideas
         this.goals = goals
         this.milestones = milestones
         this.tasks = tasks
         this.cycles = cycles
+        this.roles = roles
         this.loaded = true
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
@@ -298,6 +356,71 @@ export const useGoalsStore = defineStore('goals', {
       const next: Task = { ...current, cycleId: undefined }
       await tasksTable().put(plain(next))
       this.tasks = this.tasks.map((t) => (t.id === taskId ? next : t))
+    },
+
+    // ---------- 看板 ----------
+
+    async createRole(input: {
+      name: string
+      tier?: RoleTier
+      charter?: string
+      promptId?: string
+      promptTitle?: string
+      maxDoing?: number
+    }): Promise<BoardRole> {
+      const role = newBoardRole(input)
+      await rolesTable().put(role)
+      this.roles = [...this.roles, role]
+      return role
+    },
+
+    async updateRole(id: string, patch: Partial<Omit<BoardRole, 'id' | 'createdAt'>>): Promise<void> {
+      const current = this.roles.find((role) => role.id === id)
+      if (!current) throw new Error('角色不存在')
+      const next = boardRoleSchema.parse({ ...current, ...patch, updatedAt: isoNow() })
+      await rolesTable().put(plain(next))
+      this.roles = this.roles.map((role) => (role.id === id ? next : role))
+    },
+
+    async deactivateRole(id: string): Promise<void> {
+      await this.updateRole(id, { active: false })
+    },
+
+    /** 手动/确认后分配人格：只改 roleId，不动 status */
+    async assignRole(taskId: string, roleId: string | null): Promise<void> {
+      await this.updateTask(taskId, { roleId: roleId ?? undefined })
+    },
+
+    /** 看板换列：更新状态并重排在同一列中的顺序 */
+    async moveTaskOnBoard(
+      taskId: string,
+      status: TaskStatus,
+      orderedIdsInColumn: string[],
+    ): Promise<void> {
+      const current = this.tasks.find((t) => t.id === taskId)
+      if (!current) throw new Error('任务不存在')
+      const updates: Task[] = []
+      orderedIdsInColumn.forEach((id, index) => {
+        const task = this.tasks.find((t) => t.id === id)
+        if (!task) return
+        updates.push({
+          ...task,
+          status: id === taskId ? status : task.status,
+          boardOrder: index,
+        })
+      })
+      // 目标列原有的任务也要补 boardOrder，避免与新任务排序键冲突
+      const movedIds = new Set(orderedIdsInColumn)
+      for (const task of this.tasks) {
+        if (task.status === status && !movedIds.has(task.id)) {
+          updates.push({ ...task, boardOrder: orderedIdsInColumn.length + task.order })
+        }
+      }
+      await db.transaction('rw', tasksTable(), async () => {
+        await tasksTable().bulkPut(plain(updates))
+      })
+      const map = new Map(updates.map((task) => [task.id, task]))
+      this.tasks = this.tasks.map((task) => map.get(task.id) ?? task)
     },
   },
 })

@@ -11,7 +11,7 @@ const props = defineProps<{
   taskCount: number
 }>()
 
-defineEmits<{ open: [] }>()
+defineEmits<{ open: []; 'send-to-board': [] }>()
 
 const STATUS_LABEL: Record<Goal['status'], string> = {
   draft: '草稿',
@@ -44,6 +44,14 @@ const progressLabel = computed(() =>
       </n-tag>
       <n-tag size="small" :bordered="false">{{ milestoneCount }} 里程碑</n-tag>
       <span v-if="goal.targetDate" class="goal-card-date">{{ goal.targetDate }}</span>
+      <span class="goal-card-space" />
+      <button
+        v-if="goal.status === 'draft'"
+        class="goal-card-board"
+        @click.stop="$emit('send-to-board')"
+      >
+        送入看板
+      </button>
     </div>
 
     <div class="goal-card-progress">
@@ -131,6 +139,24 @@ const progressLabel = computed(() =>
 .goal-card-date {
   color: var(--app-muted);
   font-size: var(--text-xs);
+}
+
+.goal-card-space {
+  flex: 1;
+}
+
+.goal-card-board {
+  border: 1px solid var(--app-accent-border);
+  border-radius: var(--radius-sm);
+  background: var(--app-accent-tint);
+  color: var(--app-accent);
+  font-size: var(--text-xs);
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.goal-card-board:hover {
+  filter: brightness(1.05);
 }
 
 .goal-card-progress {
