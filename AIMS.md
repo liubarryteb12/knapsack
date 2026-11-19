@@ -201,4 +201,4 @@
 | **G5** | `goal-pack` 导入管线 | 🟢 完成 | 导入 9 条断言通过；浏览器实测粘贴→预览→入库→重复包提示 |
 | **G6** | 两轮 AI 拆解向导 | 🟢 完成 | 两轮协议、回喂重试、中断、草稿恢复；真实 API 两轮联调通过（澄清 5 问 → 5 里程碑）；修复相对日期缺少「今天」基准的缺陷 |
 | **G7** | `knapsack-goal` skill | 🟢 完成 | `skills/knapsack-goal` 已安装到 `~/.claude/skills` |
-| **G8** | 回归、文档与验收 | 🟢 完成 | `npm test` 40 文件 0 失败；`audit:boundary` 13/13；`audit:modules` 通过；build 通过；浏览器实测创建→晋级→拆解→刷新持久化；Android 真机（Redmi K20 Pro M2012K11AC / Android 13 / 1.3.2 (8)）实测导入→预览→入库→强杀重启后仍在→重复包提示→本地状态不被覆盖；Windows 桌面（Tauri debug，WebView2）实测同一链路通过；备份导出含 6 张 `mod_goals_*` 表，导入第二份目标后恢复备份，目标回到备份时状态，其余 28 张表行数与哈希与基线完全一致 |
+| **G8** | 回归、文档与验收 | 🟢 完成 | `npm test` 40 文件 0 失败；`audit:boundary` 13/13；`audit:modules` 通过；build 通过；浏览器实测创建→晋级→拆解→刷新持久化；Android 真机（Redmi K20 Pro M2012K11AC / Android 13 / 1.3.2 (8)）实测导入→预览→入库→强杀重启后仍在→重复包提示→本地状态不被覆盖；Windows 桌面（Tauri debug，WebView2）实测同一链路通过；备份导出含 6 张 `mod_goals_*` 表，导入第二份目标后恢复备份，目标回到备份时状态，其余 28 张表行数与哈希与基线完全一致；桌面与 Android 两端均验证，恢复后逐表比对基线无差异 |
