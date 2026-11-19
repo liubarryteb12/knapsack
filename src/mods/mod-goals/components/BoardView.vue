@@ -30,7 +30,6 @@ const filterRoleId = ref('')
 const groupBy = ref<'goal' | 'role'>('goal')
 const showRoles = ref(false)
 const moderatorShow = ref(false)
-
 const goalOptions = computed(() => [
   { label: '全部目标', value: '' },
   ...store.goalsSorted
@@ -47,8 +46,6 @@ const groupOptions = [
   { label: '按目标分组', value: 'goal' },
   { label: '按人格分组', value: 'role' },
 ]
-
-const moderatorModal = ref<InstanceType<typeof ModeratorModal> | null>(null)
 
 function tasksInColumn(status: TaskStatus): Task[] {
   return store.boardTasksByStatus(
@@ -120,7 +117,7 @@ async function onAssign(task: Task, roleId: string | null) {
         <template #icon><Users :size="14" /></template>
         管理人格
       </n-button>
-      <n-button size="small" type="primary" @click="moderatorModal?.openMeeting()" :disabled="store.activeRoles.length === 0">
+      <n-button size="small" type="primary" @click="moderatorShow = true" :disabled="store.activeRoles.length === 0">
         <template #icon><Sparkles :size="14" /></template>
         主理人开会
       </n-button>
@@ -178,7 +175,7 @@ async function onAssign(task: Task, roleId: string | null) {
     </template>
 
     <RoleManagerModal v-model:show="showRoles" />
-    <ModeratorModal ref="moderatorModal" :show="moderatorShow" @update:show="moderatorShow = $event" />
+    <ModeratorModal :show="moderatorShow" @update:show="moderatorShow = $event" />
   </div>
 </template>
 

@@ -14,6 +14,8 @@ interface WorkPromptProjectionLite {
   systemRole: string
 }
 
+const moderatorOutputSchema = dispatchDraftSchema.omit({ createdAt: true, model: true })
+
 function issuesText(error: z.ZodError): string {
   return error.issues
     .slice(0, 6)
@@ -137,9 +139,10 @@ export async function runModerator(
   }
 
   const first = await callChat(config, basePrompt, signal)
-  const parsed = dispatchDraftSchema.safeParse(extractJson(first))
+  const parsed = moderatorOutputSchema.safeParse(extractJson(first))
   if (parsed.success) {
-    const result = validateDispatch(parsed.data, {
+    const draft: DispatchDraft = { ...parsed.data, createdAt: new Date().toISOString(), model: config.model }
+    const result = validateDispatch(draft, {
       taskIds: new Set(snapshot.tasks.map((t) => t.id)),
       roles: snapshot.roles,
       doingCountByRole: input.doingCountByRole,
@@ -157,11 +160,12 @@ export async function runModerator(
     '请严格按输出格式重新只输出一个合法 JSON 对象。',
   ].join('\n')
   const second = await callChat(config, retryPrompt, signal)
-  const secondParsed = dispatchDraftSchema.safeParse(extractJson(second))
+  const secondParsed = moderatorOutputSchema.safeParse(extractJson(second))
   if (!secondParsed.success) {
     throw new ModeratorError(`主理人两次输出均不合规：${issuesText(secondParsed.error)}`)
   }
-  const result = validateDispatch(secondParsed.data, {
+  const secondDraft: DispatchDraft = { ...secondParsed.data, createdAt: new Date().toISOString(), model: config.model }
+  const result = validateDispatch(secondDraft, {
     taskIds: new Set(snapshot.tasks.map((t) => t.id)),
     roles: snapshot.roles,
     doingCountByRole: input.doingCountByRole,
