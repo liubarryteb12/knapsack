@@ -40,6 +40,122 @@ export const horizonSchema = z.enum(['quarter', 'half-year', 'year', 'open'])
 export const estimateSchema = z.enum(['S', 'M', 'L'])
 export const goalSourceSchema = z.enum(['manual', 'claude-desktop', 'knapsack-ai'])
 export const prioritySchema = z.union([z.literal(1), z.literal(2), z.literal(3)])
+export const roleTierSchema = z.enum(['lead', 'specialist', 'helper'])
+
+// ---------- 看板角色（BoardRole） ----------
+
+export const MAX_ROLES = 12
+export const MAX_CHARTER_LENGTH = 500
+export const DEFAULT_MAX_DOING = 2
+
+export const boardRoleSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().trim().min(1, '角色名称不能为空').max(40),
+  tier: roleTierSchema.default('specialist'),
+  charter: z.string().max(MAX_CHARTER_LENGTH).default(''),
+  promptId: z.string().min(1).optional(),
+  promptTitle: z.string().max(160).optional(),
+  maxDoing: z.number().int().min(1).max(9).default(DEFAULT_MAX_DOING),
+  active: z.boolean().default(true),
+  createdAt: timestampSchema,
+  updatedAt: timestampSchema,
+})
+
+export type BoardRole = z.infer<typeof boardRoleSchema>
+export type RoleTier = z.infer<typeof roleTierSchema>
+
+// ---------- 分派草案（不落库） ----------
+
+export const MAX_DISPATCH_TRAITS = 3
+
+export const dispatchAssignmentSchema = z.object({
+  taskId: z.string().min(1),
+  roleId: z.string().min(1),
+  priority: prioritySchema.default(2),
+  traits: z.array(z.string().trim().min(1).max(20)).max(MAX_DISPATCH_TRAITS).default([]),
+  reason: z.string().max(40).default(''),
+})
+
+export const dispatchUnassignedSchema = z.object({
+  taskId: z.string().min(1),
+  reason: z.string().max(40).default(''),
+})
+
+export const dispatchDraftSchema = z.object({
+  createdAt: timestampSchema,
+  model: z.string().min(1),
+  promptId: z.string().min(1).optional(),
+  assignments: z.array(dispatchAssignmentSchema).default([]),
+  unassigned: z.array(dispatchUnassignedSchema).default([]),
+  notes: z.string().max(200).default(''),
+})
+
+export type DispatchDraft = z.infer<typeof dispatchDraftSchema>
+export type DispatchAssignment = z.infer<typeof dispatchAssignmentSchema>
+
+export class DispatchError extends Error {}
+
+/**
+ * 校验草案引用完整性与容量：
+ * - taskId / roleId 必须来自输入快照；未知引用整体丢弃并计数
+ * - 同一 taskId 不得重复出现
+ * - 每个角色的 doing 建议数不得超过 maxDoing，超出记为冲突
+ * 返回净化后的草案与问题清单，UI 决定哪些可勾选。
+ */
+export function validateDispatch(
+  draft: DispatchDraft,
+  snapshot: {
+    taskIds: ReadonlySet<string>
+    roles: ReadonlyArray<{ id: string; maxDoing: number }>
+    doingCountByRole?: Readonly<Record<string, number>>
+    manualRoleByTask?: Readonly<Record<string, string>>
+  },
+): { clean: DispatchDraft; dropped: Array<{ index: number; reason: string }>; conflicts: string[] } {
+  const dropped: Array<{ index: number; reason: string }> = []
+  const seenTasks = new Set<string>()
+  const roleById = new Map(snapshot.roles.map((role) => [role.id, role]))
+  const perRoleCounts = new Map<string, number>()
+  const conflicts: string[] = []
+  const assignments: DispatchAssignment[] = []
+
+  draft.assignments.forEach((item, index) => {
+    if (!snapshot.taskIds.has(item.taskId)) {
+      dropped.push({ index, reason: `任务不存在：${item.taskId}` })
+      return
+    }
+    if (!roleById.has(item.roleId)) {
+      dropped.push({ index, reason: `人格不存在：${item.roleId}` })
+      return
+    }
+    if (seenTasks.has(item.taskId)) {
+      dropped.push({ index, reason: `任务重复分派：${item.taskId}` })
+      return
+    }
+    const manual = snapshot.manualRoleByTask?.[item.taskId]
+    if (manual && manual !== item.roleId) {
+      dropped.push({ index, reason: `手动分派优先，已保留：${item.taskId}` })
+      return
+    }
+    seenTasks.add(item.taskId)
+    perRoleCounts.set(item.roleId, (perRoleCounts.get(item.roleId) ?? 0) + 1)
+    assignments.push(item)
+  })
+
+  for (const [roleId, count] of perRoleCounts) {
+    const role = roleById.get(roleId)
+    if (!role) continue
+    const doing = snapshot.doingCountByRole?.[roleId] ?? 0
+    if (doing + count > role.maxDoing) {
+      conflicts.push(`${roleId}：进行中 ${doing} + 建议 ${count} 超过容量 ${role.maxDoing}`)
+    }
+  }
+
+  return {
+    clean: { ...draft, assignments },
+    dropped,
+    conflicts,
+  }
+}
 
 // ---------- 实体 ----------
 
@@ -95,6 +211,10 @@ export const taskSchema = z.object({
   status: taskStatusSchema.default('todo'),
   order: z.number().int().min(0).default(0),
   externalId: externalIdSchema.optional(),
+  // 看板扩展字段（可缺省，旧数据读出 undefined）
+  roleId: z.string().min(1).optional(),
+  boardOrder: z.number().int().min(0).optional(),
+  boardPriority: prioritySchema.optional(),
 })
 
 export const cycleSchema = z.object({
@@ -421,6 +541,32 @@ export function newCycle(
     endDate: input.endDate,
     focus: input.focus ?? '',
     externalId: input.externalId,
+  })
+}
+
+export function newBoardRole(
+  input: {
+    name: string
+    tier?: z.infer<typeof roleTierSchema>
+    charter?: string
+    promptId?: string
+    promptTitle?: string
+    maxDoing?: number
+    active?: boolean
+  },
+  now = Date.now(),
+): BoardRole {
+  return boardRoleSchema.parse({
+    id: nanoid(10),
+    name: input.name,
+    tier: input.tier ?? 'specialist',
+    charter: input.charter ?? '',
+    promptId: input.promptId,
+    promptTitle: input.promptTitle,
+    maxDoing: input.maxDoing ?? DEFAULT_MAX_DOING,
+    active: input.active ?? true,
+    createdAt: iso(now),
+    updatedAt: iso(now),
   })
 }
 

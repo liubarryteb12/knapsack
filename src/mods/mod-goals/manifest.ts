@@ -4,8 +4,8 @@ import type { ModManifest } from '../../core/modRegistry'
 const manifest: ModManifest = {
   id: 'mod-goals',
   name: '目标',
-  version: '1.4.0',
-  schemaRevision: 1,
+  version: '1.5.0',
+  schemaRevision: 2,
   description: '想法池、目标树与周期安排，支持 AI 拆解与 goal-pack 导入',
   enabledByDefault: true,
   dbStores: [
@@ -45,6 +45,7 @@ const manifest: ModManifest = {
         { name: 'milestoneOrder', keyPath: ['milestoneId', 'order'] },
         { name: 'cycleId', keyPath: 'cycleId' },
         { name: 'status', keyPath: 'status' },
+        { name: 'roleId', keyPath: 'roleId' },
         { name: 'externalId', keyPath: 'externalId' },
       ],
     },
@@ -63,6 +64,15 @@ const manifest: ModManifest = {
       indexes: [
         { name: 'importedAt', keyPath: 'importedAt' },
         { name: 'idempotencyKey', keyPath: 'idempotencyKey' },
+      ],
+    },
+    {
+      name: 'mod_goals_roles',
+      keyPath: 'id',
+      indexes: [
+        { name: 'active', keyPath: 'active' },
+        { name: 'tier', keyPath: 'tier' },
+        { name: 'updatedAt', keyPath: 'updatedAt' },
       ],
     },
   ],
