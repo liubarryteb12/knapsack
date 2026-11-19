@@ -25,6 +25,12 @@ import {
 } from '../schema'
 import { compressThumbnail } from '../services/thumbnailCompressor'
 import { usePromptsStore } from '../store'
+import {
+  CUSTOM_FACET_OPTION,
+  PROMPT_FACET_PRESETS,
+  hydrateFacetDraft,
+  serializeFacetDraft,
+} from '../facetOptions'
 
 const props = defineProps<{
   show: boolean
@@ -59,13 +65,23 @@ const cameraOptions = CAMERA_MOVEMENTS.map((value) => ({
   value,
   label: CAMERA_MOVEMENT_LABELS[value],
 }))
+const customFacetOption = { value: CUSTOM_FACET_OPTION, label: '其他（手填）' }
+function facetOptions(values: readonly string[]) {
+  return [...values.map((value) => ({ value, label: value })), customFacetOption]
+}
+const targetToolOptions = facetOptions(PROMPT_FACET_PRESETS.targetTool)
+const domainThemeOptions = facetOptions(PROMPT_FACET_PRESETS.domainTheme)
+const styleTechniqueOptions = facetOptions(PROMPT_FACET_PRESETS.styleTechnique)
 
 const form = reactive({
   title: '',
   modality: 'WORK_LLM' as PromptModality,
-  targetTools: '',
-  themes: '',
-  styles: '',
+  targetToolSelected: [] as string[],
+  targetToolCustom: '',
+  domainThemeSelected: [] as string[],
+  domainThemeCustom: '',
+  styleTechniqueSelected: [] as string[],
+  styleTechniqueCustom: '',
   isFavorite: false,
   systemRole: '',
   templateBody: '',
@@ -85,14 +101,6 @@ const form = reactive({
   fps: 24,
   frameNotes: '',
 })
-
-function csv(values: readonly string[]): string {
-  return values.join(', ')
-}
-
-function parseCsv(value: string): string[] {
-  return [...new Set(value.split(/[,，]/).map((item) => item.trim()).filter(Boolean))]
-}
 
 function cleanupCoverPreview() {
   if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl)
@@ -119,9 +127,15 @@ function hydrate(item?: PromptItem | null) {
   void showExistingCover(item)
   form.title = item?.title ?? ''
   form.modality = item?.modality ?? 'WORK_LLM'
-  form.targetTools = csv(item?.facets.targetTool ?? [])
-  form.themes = csv(item?.facets.domainTheme ?? [])
-  form.styles = csv(item?.facets.styleTechnique ?? [])
+  const targetTool = hydrateFacetDraft(item?.facets.targetTool ?? [], PROMPT_FACET_PRESETS.targetTool)
+  const domainTheme = hydrateFacetDraft(item?.facets.domainTheme ?? [], PROMPT_FACET_PRESETS.domainTheme)
+  const styleTechnique = hydrateFacetDraft(item?.facets.styleTechnique ?? [], PROMPT_FACET_PRESETS.styleTechnique)
+  form.targetToolSelected = targetTool.selected
+  form.targetToolCustom = targetTool.custom
+  form.domainThemeSelected = domainTheme.selected
+  form.domainThemeCustom = domainTheme.custom
+  form.styleTechniqueSelected = styleTechnique.selected
+  form.styleTechniqueCustom = styleTechnique.custom
   form.isFavorite = item?.isFavorite ?? false
   form.systemRole = item?.modality === 'WORK_LLM' ? item.payload.systemRole : ''
   form.templateBody = item?.modality === 'WORK_LLM' ? item.payload.templateBody : ''
@@ -162,9 +176,18 @@ function baseItem() {
     id: props.item?.id ?? nanoid(12),
     title: form.title.trim(),
     facets: {
-      targetTool: parseCsv(form.targetTools),
-      domainTheme: parseCsv(form.themes),
-      styleTechnique: parseCsv(form.styles),
+      targetTool: serializeFacetDraft({
+        selected: form.targetToolSelected,
+        custom: form.targetToolCustom,
+      }),
+      domainTheme: serializeFacetDraft({
+        selected: form.domainThemeSelected,
+        custom: form.domainThemeCustom,
+      }),
+      styleTechnique: serializeFacetDraft({
+        selected: form.styleTechniqueSelected,
+        custom: form.styleTechniqueCustom,
+      }),
     },
     isFavorite: form.isFavorite,
     usageCount: props.item?.usageCount ?? 0,
@@ -336,16 +359,58 @@ onBeforeUnmount(cleanupCoverPreview)
           <n-checkbox v-model:checked="form.isFavorite">收藏</n-checkbox>
         </label>
         <label>
-          <span>适用工具</span>
-          <n-input v-model:value="form.targetTools" placeholder="Claude, GPT, Midjourney" />
+          <span>适用场景</span>
+          <n-select
+            v-model:value="form.targetToolSelected"
+            multiple
+            filterable
+            clearable
+            max-tag-count="responsive"
+            :options="targetToolOptions"
+            placeholder="选择适用场景，可多选"
+          />
+          <n-input
+            v-if="form.targetToolSelected.includes(CUSTOM_FACET_OPTION)"
+            v-model:value="form.targetToolCustom"
+            class="facet-custom-input"
+            placeholder="手填适用场景，多个用逗号分隔"
+          />
         </label>
         <label>
-          <span>业务场景 / 主题</span>
-          <n-input v-model:value="form.themes" placeholder="架构设计, 写实人像" />
+          <span>分类</span>
+          <n-select
+            v-model:value="form.domainThemeSelected"
+            multiple
+            filterable
+            clearable
+            max-tag-count="responsive"
+            :options="domainThemeOptions"
+            placeholder="选择分类，可多选"
+          />
+          <n-input
+            v-if="form.domainThemeSelected.includes(CUSTOM_FACET_OPTION)"
+            v-model:value="form.domainThemeCustom"
+            class="facet-custom-input"
+            placeholder="手填分类，多个用逗号分隔"
+          />
         </label>
         <label>
           <span>风格 / 技巧</span>
-          <n-input v-model:value="form.styles" placeholder="Few-Shot, 电影质感" />
+          <n-select
+            v-model:value="form.styleTechniqueSelected"
+            multiple
+            filterable
+            clearable
+            max-tag-count="responsive"
+            :options="styleTechniqueOptions"
+            placeholder="选择风格或技巧，可多选"
+          />
+          <n-input
+            v-if="form.styleTechniqueSelected.includes(CUSTOM_FACET_OPTION)"
+            v-model:value="form.styleTechniqueCustom"
+            class="facet-custom-input"
+            placeholder="手填风格或技巧，多个用逗号分隔"
+          />
         </label>
       </div>
 
@@ -549,6 +614,10 @@ onBeforeUnmount(cleanupCoverPreview)
 
 .field-grid .wide {
   grid-column: 1 / -1;
+}
+
+.facet-custom-input {
+  margin-top: 2px;
 }
 
 .cover-field {

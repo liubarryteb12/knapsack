@@ -1,15 +1,41 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { NConfigProvider, NMessageProvider, NGlobalStyle, zhCN, dateZhCN, darkTheme, type GlobalThemeOverrides } from 'naive-ui'
-import { RouterLink, RouterView, useRoute } from 'vue-router'
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { Settings, Backpack } from '@lucide/vue'
+import packageInfo from '../package.json'
 import { useThemeStore } from './stores/theme'
 import { modRegistry } from './core/bootMods'
 import ModSlot from './core/components/ModSlot.vue'
 
 const theme = useThemeStore()
 const route = useRoute()
+const router = useRouter()
 const navItems = computed(() => modRegistry.enabledNavItems)
+const appVersion = `v${packageInfo.version}`
+const pendingPromptShare = ref('')
+
+async function receivePromptShare(event: Event) {
+  const link = (event as CustomEvent<string>).detail
+  if (typeof link !== 'string' || !link.trim()) return
+  pendingPromptShare.value = link.trim()
+  if (route.path !== '/prompts') await router.push('/prompts')
+  await nextTick()
+  emitPromptShare()
+}
+
+function emitPromptShare() {
+  const link = pendingPromptShare.value
+  if (!link || route.path !== '/prompts') return
+  pendingPromptShare.value = ''
+  window.dispatchEvent(new CustomEvent('knapsack:prompt-share-ready', { detail: link }))
+}
+
+watch(() => route.path, async (path) => {
+  if (path !== '/prompts') return
+  await nextTick()
+  emitPromptShare()
+})
 
 function hasActivePath(item: { activePaths?: readonly string[] }): boolean {
   return item.activePaths?.some(
@@ -17,8 +43,11 @@ function hasActivePath(item: { activePaths?: readonly string[] }): boolean {
   ) ?? false
 }
 
-onMounted(() => {
+onMounted(async () => {
   void modRegistry.initialize()
+  window.addEventListener('knapsack:prompt-share', receivePromptShare)
+  await nextTick()
+  if (route.path === '/prompts') emitPromptShare()
 })
 
 /** Naive UI 主色统一为应用靛蓝：之前主按钮是默认绿，和页面 accent 打架 */
@@ -63,7 +92,7 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => ({
               <span>设置</span>
             </RouterLink>
           </nav>
-          <p class="app-version">v1.3.0</p>
+          <p class="app-version">{{ appVersion }}</p>
         </aside>
         <main class="app-main">
           <RouterView v-slot="{ Component }">

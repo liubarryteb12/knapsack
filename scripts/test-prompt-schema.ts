@@ -50,6 +50,33 @@ async function main() {
   })
   check('工作提示词可解析', work.modality === 'WORK_LLM' && work.payload.templateBody.includes('{{主题}}'))
 
+  const maxLengthBody = '长'.repeat(50_000)
+  const longWork = promptItemSchema.safeParse({
+    ...base(),
+    id: 'prompt-long-work',
+    modality: 'WORK_LLM',
+    payload: {
+      systemRole: '',
+      templateBody: maxLengthBody,
+      fewShotExamples: [],
+      outputFormat: 'PLAIN',
+    },
+  })
+  check('五万字提示词正文可解析', longWork.success)
+
+  const oversizedWork = promptItemSchema.safeParse({
+    ...base(),
+    id: 'prompt-oversized-work',
+    modality: 'WORK_LLM',
+    payload: {
+      systemRole: '',
+      templateBody: `${maxLengthBody}超`,
+      fewShotExamples: [],
+      outputFormat: 'PLAIN',
+    },
+  })
+  check('超过五万字的提示词正文被拒', !oversizedWork.success)
+
   const image: PromptItem = promptItemSchema.parse({
     ...base(),
     id: 'prompt-2',

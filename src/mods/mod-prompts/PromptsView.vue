@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   NButton,
   NCard,
@@ -42,9 +43,12 @@ import {
   type PromptModality,
 } from './schema'
 import { usePromptsStore } from './store'
+import { decodePromptShareLink } from './shareLink'
 
 const store = usePromptsStore()
 const message = useMessage()
+const route = useRoute()
+const router = useRouter()
 const activeTab = ref<'gallery' | 'snippets'>('gallery')
 const showEditor = ref(false)
 const editingItem = ref<PromptItem | null>(null)
@@ -52,6 +56,10 @@ const showRunner = ref(false)
 const runningItem = ref<PromptItem | null>(null)
 const showShare = ref(false)
 const sharingItem = ref<PromptItem | null>(null)
+const initialImport = ref('')
+const PROMPT_SHARE_READY_EVENT = 'knapsack:prompt-share-ready'
+let storeReady = false
+let pendingReadyShare = ''
 
 const filters = reactive({
   keyword: '',
@@ -62,9 +70,58 @@ const filters = reactive({
   sortBy: 'favorite' as PromptSortMode,
 })
 
-onMounted(() => {
-  void store.load()
+onMounted(async () => {
+  window.addEventListener(PROMPT_SHARE_READY_EVENT, handleReadyShare)
+  try {
+    await store.load()
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : String(e))
+  }
+  storeReady = true
+  await consumeIncomingShare()
+  if (pendingReadyShare) {
+    const link = pendingReadyShare
+    pendingReadyShare = ''
+    await showIncomingShare(link)
+  }
 })
+
+onBeforeUnmount(() => {
+  window.removeEventListener(PROMPT_SHARE_READY_EVENT, handleReadyShare)
+})
+
+function handleReadyShare(event: Event) {
+  const link = (event as CustomEvent<string>).detail
+  if (typeof link !== 'string' || !link.trim()) return
+  if (!storeReady) {
+    pendingReadyShare = link.trim()
+    return
+  }
+  void showIncomingShare(link.trim())
+}
+
+async function consumeIncomingShare() {
+  const raw = typeof route.query.share === 'string'
+    ? route.query.share
+    : typeof route.query.d === 'string'
+      ? `knapsack-prompt://share?d=${encodeURIComponent(route.query.d)}`
+      : ''
+  if (!raw) return
+  await showIncomingShare(raw)
+  await router.replace({ path: '/prompts' })
+}
+
+async function showIncomingShare(raw: string) {
+  initialImport.value = raw
+  sharingItem.value = null
+  showShare.value = true
+  try {
+    const incoming = await decodePromptShareLink(raw)
+    message.info(`分享链接已读取「${incoming.title}」，请确认导入`)
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : String(e))
+  }
+}
 
 const sortOptions = [
   { value: 'favorite', label: '收藏优先' },
@@ -198,7 +255,7 @@ async function copyDirect(item: PromptItem) {
     <UiPageHeader title="提示词库" subtitle="收集工作、生图与生视频提示词，填变量后直接复制">
       <n-button @click="openShare()">
         <template #icon><Share2 :size="15" /></template>
-        导入分享码
+        导入分享链接
       </n-button>
       <n-button type="primary" @click="openNew">
         <template #icon><Plus :size="15" /></template>
@@ -221,7 +278,7 @@ async function copyDirect(item: PromptItem) {
             clearable
             max-tag-count="responsive"
             :options="targetToolOptions"
-            placeholder="适用工具"
+            placeholder="适用场景"
           />
           <n-select
             v-model:value="filters.domainTheme"
@@ -229,7 +286,7 @@ async function copyDirect(item: PromptItem) {
             clearable
             max-tag-count="responsive"
             :options="themeOptions"
-            placeholder="业务场景 / 主题"
+            placeholder="分类"
           />
           <n-select
             v-model:value="filters.styleTechnique"
@@ -348,7 +405,11 @@ async function copyDirect(item: PromptItem) {
       @saved="editingItem = null"
     />
     <PromptRunnerDrawer v-model:show="showRunner" :item="runningItem" />
-    <PromptShareModal v-model:show="showShare" :item="sharingItem" />
+    <PromptShareModal
+      v-model:show="showShare"
+      :item="sharingItem"
+      :initial-import="initialImport"
+    />
   </div>
 </template>
 

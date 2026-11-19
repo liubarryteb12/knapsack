@@ -3,6 +3,7 @@ import { z } from 'zod'
 export const PROMPT_MODALITIES = ['WORK_LLM', 'IMAGE_GEN', 'VIDEO_GEN'] as const
 export const promptModalitySchema = z.enum(PROMPT_MODALITIES)
 export type PromptModality = z.infer<typeof promptModalitySchema>
+export const PROMPT_CONTENT_MAX_LENGTH = 50_000
 
 const facetListSchema = z
   .array(z.string().trim().min(1))
@@ -37,8 +38,8 @@ const promptBaseSchema = z.object({
 export const outputFormatSchema = z.enum(['MARKDOWN', 'JSON', 'TABLE', 'CODE', 'PLAIN'])
 
 export const workPromptPayloadSchema = z.object({
-  systemRole: z.string().max(20_000).default(''),
-  templateBody: z.string().min(1, '模板正文不能为空').max(20_000),
+  systemRole: z.string().max(PROMPT_CONTENT_MAX_LENGTH).default(''),
+  templateBody: z.string().min(1, '模板正文不能为空').max(PROMPT_CONTENT_MAX_LENGTH),
   fewShotExamples: z
     .array(
       z.object({
@@ -60,9 +61,9 @@ export const promptSnippetRefSchema = z.object({
 export const imageAspectRatioSchema = z.enum(['1:1', '16:9', '9:16', '4:3', '3:4', '21:9'])
 
 export const imagePromptPayloadSchema = z.object({
-  positivePrompt: z.string().min(1, '正向提示词不能为空').max(20_000),
-  positivePromptZh: z.string().max(20_000).default(''),
-  negativePrompt: z.string().max(20_000).default(''),
+  positivePrompt: z.string().min(1, '正向提示词不能为空').max(PROMPT_CONTENT_MAX_LENGTH),
+  positivePromptZh: z.string().max(PROMPT_CONTENT_MAX_LENGTH).default(''),
+  negativePrompt: z.string().max(PROMPT_CONTENT_MAX_LENGTH).default(''),
   activeSnippets: z
     .array(promptSnippetRefSchema)
     .default([])
@@ -102,10 +103,10 @@ export const CAMERA_MOVEMENTS = [
 export const cameraMovementSchema = z.enum(CAMERA_MOVEMENTS)
 
 export const videoPromptPayloadSchema = z.object({
-  subjectAndScene: z.string().min(1, '主体与环境不能为空').max(20_000),
-  motionDynamics: z.string().max(20_000).default(''),
+  subjectAndScene: z.string().min(1, '主体与环境不能为空').max(PROMPT_CONTENT_MAX_LENGTH),
+  motionDynamics: z.string().max(PROMPT_CONTENT_MAX_LENGTH).default(''),
   cameraMovement: z.array(cameraMovementSchema).max(4).default([]),
-  atmosphereAndLighting: z.string().max(20_000).default(''),
+  atmosphereAndLighting: z.string().max(PROMPT_CONTENT_MAX_LENGTH).default(''),
   videoParams: z
     .object({
       durationSec: z.union([z.literal(5), z.literal(10), z.literal(15)]).optional(),

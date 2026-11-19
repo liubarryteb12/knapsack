@@ -1,5 +1,8 @@
-import { createApp } from 'vue'
+import { createApp, nextTick } from 'vue'
 import { createPinia } from 'pinia'
+import { listen } from '@tauri-apps/api/event'
+import { invoke, isTauri } from '@tauri-apps/api/core'
+import { registerPlugin } from '@capacitor/core'
 import router from './router'
 import App from './App.vue'
 import './styles/main.css'
@@ -13,6 +16,28 @@ const app = createApp(App)
  */
 const CRASH_LOG_KEY = 'knapsack.crash-log.v1'
 const CRASH_LOG_LIMIT = 20
+const PROMPT_SHARE_EVENT = 'knapsack:prompt-share'
+let appMounted = false
+let pendingNativePromptShare = ''
+
+interface PromptShareNativePlugin {
+  consumePending(): Promise<{ link?: string | null }>
+  addListener(
+    eventName: 'promptShare',
+    listener: (event: { link?: string | null }) => void,
+  ): Promise<unknown>
+}
+
+const PromptShareNative = registerPlugin<PromptShareNativePlugin>('PromptShare')
+
+function dispatchPromptShare(link: string): void {
+  if (!link.startsWith('knapsack-prompt://')) return
+  if (!appMounted) {
+    pendingNativePromptShare = link
+    return
+  }
+  window.dispatchEvent(new CustomEvent(PROMPT_SHARE_EVENT, { detail: link }))
+}
 
 function recordFatal(scope: string, detail: unknown): void {
   try {
@@ -40,3 +65,27 @@ window.addEventListener('unhandledrejection', (e: PromiseRejectionEvent) => reco
 app.use(createPinia())
 app.use(router)
 app.mount('#app')
+appMounted = true
+if (pendingNativePromptShare) {
+  const link = pendingNativePromptShare
+  pendingNativePromptShare = ''
+  window.dispatchEvent(new CustomEvent(PROMPT_SHARE_EVENT, { detail: link }))
+}
+
+async function initializeNativePromptShare(): Promise<void> {
+  if (isTauri()) {
+    await listen<string>('knapsack://prompt-share', (event) => dispatchPromptShare(event.payload))
+    await nextTick()
+    await invoke('prompt_share_ready')
+    return
+  }
+
+  await PromptShareNative.addListener('promptShare', (event) => {
+    if (event.link) dispatchPromptShare(event.link)
+  })
+  await nextTick()
+  const event = await PromptShareNative.consumePending()
+  if (event.link) dispatchPromptShare(event.link)
+}
+
+void initializeNativePromptShare().catch((error) => recordFatal('prompt-share', error))
