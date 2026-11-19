@@ -1,6 +1,6 @@
-# 看板与主理人（Goals Board）设计草案
+# 看板与主理人（Goals Board）设计规格
 
-> 状态：草案 v0.1（待人类审阅）
+> 状态：v1.0（B1–B5 已实现并验收，2026-11-20；§12 MCP 平台化待立项）
 > 适用版本：v1.5.0 起
 > 定位：目标系统（Mod 07）的扩展，不新开模块
 > 关联文档：[GOALS_MODULE_SPEC.md](./GOALS_MODULE_SPEC.md)、[V4_MODULARIZATION_PLAN.md](./V4_MODULARIZATION_PLAN.md)

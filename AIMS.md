@@ -231,8 +231,8 @@
 | 任务编号 | 任务名称 | 状态 | 证据 |
 |---|---|---|---|
 | **B1** | 看板契约：Task 扩展字段、BoardRole、分派草案与校验器 | 🟢 完成 | `dc78269`；`test-board-schema` 23 项断言通过 |
-| **B2** | 看板视图：第四标签、三列卡片、拖拽换列、手动分配 | ⏳ 待启动 | — |
-| **B3** | 角色管理：列表/新建/编辑、提示词库导入人格、失效降级 | ⏳ 待启动 | — |
-| **B4** | 提示词库 capability：`work-prompt-catalog` 只读投影 | ⏳ 待启动 | — |
-| **B5** | 主理人分派：提示词组装、草案预览、事务应用 | ⏳ 待启动 | — |
-| **B6** | 回归、文档与验收：全量测试、双端冒烟、台账回填 | ⏳ 待启动 | — |
+| **B2** | 看板视图：第四标签、三列卡片、手动换列与分配 | 🟢 完成 | `138b90c`；`test-board-store` 16 断言；浏览器实测换列/分配/送入看板刷新持久；`52b43ac` 修复 roleOptions 非响应式缺陷 |
+| **B3** | 角色管理：列表/新建/编辑、提示词库导入人格、失效降级 | 🟢 完成 | `ecbcf0e`；弹窗 CRUD + capability 导入；失效人格黄标 charter 兜底 |
+| **B4** | 提示词库 capability：`work-prompt-catalog` 只读投影 | 🟢 完成 | `ecbcf0e`；`test-work-prompt-catalog` 7 断言；audit:modules 通过 |
+| **B5** | 主理人分派：提示词组装、草案预览、事务应用 | 🟢 完成 | `ecbcf0e` + `5bb759f`；`test-dispatch-prompt` 10 断言；真实 API（DeepSeek）联调：20 条建议、容量感知备注、roleId 落库、手动保护生效 |
+| **B6** | 回归、文档与验收：全量测试、双端构建、台账回填 | 🟢 完成 | `npm test` 44 文件 0 失败；audit 通过；Windows Tauri debug `app.exe` 与 Android `app-debug.apk`（1.5.0/10）构建通过（Android 需 JDK 21，本机 JAVA_HOME=17 需覆盖）；USER_GUIDE 5.6；SPEC 状态升 v1.0；台账回填 |

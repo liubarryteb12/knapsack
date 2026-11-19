@@ -262,10 +262,10 @@
 - [x] B5.6 验证：dispatch 提示词与校验测试 + 真实 API 联调 + 全量回归
 
 ### 阶段 B6：回归、文档与验收
-- [ ] B6.1 全量回归 + audit:boundary/audit:modules + build
-- [ ] B6.2 浏览器实测：创建目标→送入看板→手动分派→主理人分派→刷新持久
-- [ ] B6.3 文档：USER_GUIDE 看板章节 + BOARD_MODULE_SPEC 状态更新
-- [ ] B6.4 AIMS 台账回填 + AIMSTODO 执行日志
+- [x] B6.1 全量回归 + audit:boundary/audit:modules + build
+- [x] B6.2 浏览器实测：创建目标→送入看板→手动分派→主理人分派→刷新持久
+- [x] B6.3 文档：USER_GUIDE 看板章节 + BOARD_MODULE_SPEC 状态更新
+- [x] B6.4 AIMS 台账回填 + AIMSTODO 执行日志
 
 ### 执行证据
 
@@ -273,3 +273,5 @@
 - `[2026-11-20]` B2 完成：`52b43ac` 看板视图提交；浏览器实测（Chrome，localhost:5173）——三列渲染 20 张真实任务卡、手动换列 todo→doing 刷新后持久、角色管理弹窗创建「研究助手」、卡片分配人格刷新后持久、草稿目标「送入看板」一键 active 且切回草稿还原；发现并修复 roleOptions 非响应式缺陷；`npm test` 42 文件 0 失败、build/audit 通过。备注：桌面拖拽用「移动到」下拉替代 sortablejs（B2.3 范围收敛，拖拽在 B6 前视体验补齐），批量分配并入 B4 后的选人交互。
 - `[2026-11-20]` B3/B4/B5 完成：人格从提示词库导入（work-prompt-catalog capability，投影测试 7 断言）；失效人格 charter 兜底黄标；主理人 runModerator（快照→提示词→调用→解析→validateDispatch→回喂重试）、ModeratorModal 草案预览（勾选应用/冲突标记/丢弃清单/手动保护开关）、applyDispatch 单事务只写 roleId/boardPriority；`test-dispatch-prompt` 10 断言通过；`npm test` 44 文件 0 失败；build/audit 通过。真实 API 联调与双端冒烟归入 B6。
 - `[2026-11-20]` B5 真机联调：浏览器实测（DeepSeek API）——主理人返回 20 条建议 + 容量感知备注（「仅研究助手有剩余1席」），勾选应用后 IndexedDB 确认 roleId 落库，手动分派未被覆盖，刷新持久。联调中发现并修复：AI 无需输出 createdAt/model（改由代码补齐，moderatorOutputSchema omit）。B2 浏览器实测记录亦补：三列渲染、换列持久、人格分配持久、送入看板。
+- `[2026-11-20]` B6 进行中：版本升至 1.5.0（package.json / tauri.conf.json / Android versionCode 10）；Windows Tauri debug 构建通过（app.exe）；Android assembleDebug 通过（app-debug.apk 5.2M，2026-11-20 01:04，需 JDK 21：本机 JAVA_HOME 指向 JDK 17 会报「无效源发行版：21」，构建时以 JAVA_HOME 覆盖解决）；USER_GUIDE 新增 5.6 看板章节；AIMS 台账 B1–B5 回填完成。
+- `[2026-11-20 01:05]` B6 完成：Windows Tauri debug `app.exe` 与 Android `app-debug.apk`（1.5.0 / versionCode 10）双端构建通过；AIMSTODO/USER_GUIDE/SPEC 状态全部回填。
