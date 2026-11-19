@@ -85,7 +85,8 @@ async function main() {
 
   setActivePinia(createPinia())
   const finance = useFinanceStore()
-  await finance.load()
+  // 固定到测试数据所在月份，避免用例依赖运行当天的系统日期
+  await finance.loadMonth('2026-10', '2026-10-27')
   const first = await finance.importFromTrips(entries)
   check('账房导入个人净额而非垫付毛额', first.imported === 2 && finance.entries.reduce((sum, row) => sum + row.amountFen, 0) === 70000)
 
@@ -100,7 +101,7 @@ async function main() {
       registry.slots.resolve('daily:review-footer').length === 2)
 
   await db.financeEntries.clear()
-  await finance.load()
+  await finance.loadMonth('2026-10', '2026-10-27')
   await finance.importFromTrips([{ ...hotel!, personalNetFen: 80000 }])
   const corrected = await finance.importFromTrips([{ ...hotel!, personalNetFen: 50000 }])
   check('旧毛额或修订净额会被改正', corrected.updated === 1)

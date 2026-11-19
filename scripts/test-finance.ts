@@ -76,7 +76,8 @@ async function main() {
   await db.financeEntries.clear()
   await db.trips.clear()
   const store = useFinanceStore()
-  await store.load()
+  // 固定到测试数据所在月份，避免用例依赖运行当天的系统日期
+  await store.loadMonth('2026-10', '2026-10-23')
 
   const added = await store.add({ date: '2026-10-23', amountFen: 500, category: 'shopping' })
   check('账目可新增', !!added && store.entries.length === 1)

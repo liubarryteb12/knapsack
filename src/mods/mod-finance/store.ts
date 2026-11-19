@@ -43,7 +43,8 @@ export const useFinanceStore = defineStore('finance', {
 
   actions: {
     async load(): Promise<void> {
-      await this.loadMonth(todayStr().slice(0, 7), todayStr())
+      // 刷新当前正在看的月份，而不是跳回今天：导入旅行花费后不应悄悄切换视图。
+      await this.loadMonth(this.currentMonth || todayStr().slice(0, 7), todayStr())
     },
 
     async loadMonth(month: string, endDate = todayStr()): Promise<void> {

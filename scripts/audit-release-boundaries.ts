@@ -43,6 +43,7 @@ function read(file: string): string {
 const allowedNetworkFiles = new Set([
   'src/utils/aiConfig.ts',
   'src/mods/mod-trip/services/aiDraft.ts',
+  'src/mods/mod-goals/services/aiDecompose.ts',
   'src/mods/mod-trip/services/weather.ts',
   'src/mods/mod-team/domain/teamClient.ts',
   'src/engines/lan-share-engine/lanSessionProtocol.ts',
