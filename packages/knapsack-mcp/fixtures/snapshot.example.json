@@ -1,0 +1,109 @@
+{
+  "format": "workspace-snapshot.v1",
+  "schemaVersion": 1,
+  "createdAt": "2026-11-20T01:22:41.738Z",
+  "source": "knapsack",
+  "ideas": [
+    {
+      "id": "jbBVKf3Bnp",
+      "title": "先想清楚选题",
+      "raw": "",
+      "status": "raw",
+      "tags": [],
+      "source": "manual",
+      "createdAt": "2026-11-20T01:22:41.737Z",
+      "updatedAt": "2026-11-20T01:22:41.737Z"
+    }
+  ],
+  "goals": [
+    {
+      "id": "jMyAuKb-2J",
+      "title": "写完毕业论文",
+      "why": "必须毕业",
+      "successCriteria": "",
+      "horizon": "quarter",
+      "startDate": "2026-12-01",
+      "status": "active",
+      "priority": 2,
+      "source": "manual",
+      "createdAt": "2026-11-20T01:22:41.737Z",
+      "updatedAt": "2026-11-20T01:22:41.737Z"
+    }
+  ],
+  "milestones": [
+    {
+      "id": "YToyoo0_xS",
+      "goalId": "jMyAuKb-2J",
+      "title": "文献综述",
+      "acceptance": "综述初稿被导师认可",
+      "status": "active",
+      "order": 0
+    }
+  ],
+  "tasks": [
+    {
+      "id": "KBJ0j_iTnl",
+      "milestoneId": "YToyoo0_xS",
+      "title": "读 10 篇核心文献",
+      "detail": "",
+      "estimate": "L",
+      "status": "doing",
+      "order": 0,
+      "roleId": "GXmpRsEbLf",
+      "boardOrder": 0,
+      "boardPriority": 1
+    },
+    {
+      "id": "ubOvClWzxU",
+      "milestoneId": "YToyoo0_xS",
+      "title": "写综述初稿",
+      "detail": "",
+      "estimate": "L",
+      "status": "todo",
+      "order": 0
+    }
+  ],
+  "cycles": [
+    {
+      "id": "cZFAj7mMih",
+      "goalId": "jMyAuKb-2J",
+      "label": "12月冲刺",
+      "startDate": "2026-12-01",
+      "endDate": "2026-12-31",
+      "focus": ""
+    }
+  ],
+  "roles": [
+    {
+      "id": "GXmpRsEbLf",
+      "name": "研究助手",
+      "tier": "specialist",
+      "charter": "检索文献并整理笔记",
+      "maxDoing": 2,
+      "active": true,
+      "createdAt": "2026-11-20T01:22:41.737Z",
+      "updatedAt": "2026-11-20T01:22:41.737Z"
+    }
+  ],
+  "prompts": [
+    {
+      "id": "prompt-1",
+      "title": "文献综述助手",
+      "systemRole": "你是文献综述助手",
+      "templateBody": "帮我整理 {{topic}}",
+      "outputFormat": "MARKDOWN",
+      "facets": {
+        "targetTool": [
+          "chat"
+        ],
+        "domainTheme": [
+          "research"
+        ],
+        "styleTechnique": [
+          "summary"
+        ]
+      },
+      "updatedAt": 1795137761738
+    }
+  ]
+}

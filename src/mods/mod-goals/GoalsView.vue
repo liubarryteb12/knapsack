@@ -10,11 +10,20 @@ import {
   NTabs,
   useMessage,
 } from 'naive-ui'
-import { Plus, Sparkles, Target, Upload } from '@lucide/vue'
+import { Plus, Download, Sparkles, Target, Upload } from '@lucide/vue'
 import UiEmptyState from '../../components/ui/UiEmptyState.vue'
 import UiPageHeader from '../../components/ui/UiPageHeader.vue'
+import { modRegistry } from '../../core/bootMods'
+import { db } from '../../db'
 import { useGoalsStore } from './store'
 import type { Idea } from './schema'
+import {
+  buildWorkspaceSnapshot,
+  readPromptProjection,
+  readSnapshotTables,
+  serializeSnapshot,
+} from './services/workspaceSnapshot'
+import { saveSnapshotFile, snapshotFilename } from './services/snapshotFile'
 import CycleBoard from './components/CycleBoard.vue'
 import BoardView from './components/BoardView.vue'
 import AiWizardModal from './components/AiWizardModal.vue'
@@ -113,6 +122,29 @@ function onAiImported() {
   if (firstGoal) open(firstGoal.id)
 }
 
+const exporting = ref(false)
+
+/** 手动导出工作区快照（BOARD_MODULE_SPEC §12.2）：供外部 agent 经 MCP 读取 */
+async function exportSnapshot() {
+  exporting.value = true
+  try {
+    const [tables, prompts] = await Promise.all([
+      readSnapshotTables(db),
+      readPromptProjection(modRegistry.capabilities),
+    ])
+    const snapshot = buildWorkspaceSnapshot(tables, prompts)
+    const result = await saveSnapshotFile(serializeSnapshot(snapshot))
+    if (result.cancelled) message.info('已取消导出')
+    else if (result.path) message.success(`快照已导出：${result.path}`)
+    else if (result.warning) message.warning(`快照已保存（分享未完成：${result.warning}）`)
+    else message.success(`快照已导出：${snapshotFilename()}`)
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : String(error))
+  } finally {
+    exporting.value = false
+  }
+}
+
 async function sendToBoard(goalId: string) {
   try {
     await store.updateGoal(goalId, { status: 'active' })
@@ -134,6 +166,10 @@ async function sendToBoard(goalId: string) {
       <n-button @click="showImport = true">
         <template #icon><Upload :size="16" /></template>
         导入 goal-pack
+      </n-button>
+      <n-button :loading="exporting" @click="exportSnapshot">
+        <template #icon><Download :size="16" /></template>
+        导出快照
       </n-button>
       <n-button type="primary" @click="showCreate = true">
         <template #icon><Plus :size="16" /></template>

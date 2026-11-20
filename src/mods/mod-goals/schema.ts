@@ -585,3 +585,70 @@ export function goalCompletionRatio(
   const milestoneIds = new Set(milestones.map((milestone) => milestone.id))
   return completionRatio(tasks.filter((task) => milestoneIds.has(task.milestoneId)))
 }
+
+// ---------- 工作区快照（BOARD_MODULE_SPEC §12：MCP 平台化导出契约） ----------
+
+export const WORKSPACE_SNAPSHOT_FORMAT = 'workspace-snapshot.v1'
+export const WORKSPACE_SNAPSHOT_SCHEMA_VERSION = 1
+
+/** 提示词目录投影（与 capabilityContracts.WorkPromptProjection 字段一致，避免跨层依赖） */
+export const snapshotPromptSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  systemRole: z.string(),
+  templateBody: z.string(),
+  outputFormat: z.enum(['MARKDOWN', 'JSON', 'TABLE', 'CODE', 'PLAIN']),
+  facets: z.object({
+    targetTool: z.array(z.string()),
+    domainTheme: z.array(z.string()),
+    styleTechnique: z.array(z.string()),
+  }),
+  updatedAt: z.number(),
+})
+
+export const workspaceSnapshotSchema = z.object({
+  format: z.literal(WORKSPACE_SNAPSHOT_FORMAT, { message: `format 必须为 ${WORKSPACE_SNAPSHOT_FORMAT}` }),
+  schemaVersion: z.literal(WORKSPACE_SNAPSHOT_SCHEMA_VERSION, {
+    message: `schemaVersion 必须为 ${WORKSPACE_SNAPSHOT_SCHEMA_VERSION}`,
+  }),
+  createdAt: timestampSchema,
+  source: z.literal('knapsack'),
+  ideas: z.array(ideaSchema).default([]),
+  goals: z.array(goalSchema).default([]),
+  milestones: z.array(milestoneSchema).default([]),
+  tasks: z.array(taskSchema).default([]),
+  cycles: z.array(cycleSchema).default([]),
+  roles: z.array(boardRoleSchema).default([]),
+  prompts: z.array(snapshotPromptSchema).default([]),
+})
+
+export type WorkspaceSnapshot = z.infer<typeof workspaceSnapshotSchema>
+export type SnapshotPrompt = z.infer<typeof snapshotPromptSchema>
+
+/** 快照内引用完整性：milestone.goalId / task.milestoneId / cycle.goalId 必须指向快照内实体 */
+export function verifySnapshotReferences(
+  snapshot: WorkspaceSnapshot,
+): Array<{ path: string; message: string }> {
+  const problems: Array<{ path: string; message: string }> = []
+  const goalIds = new Set(snapshot.goals.map((goal) => goal.id))
+  const milestoneIds = new Set(snapshot.milestones.map((milestone) => milestone.id))
+  snapshot.milestones.forEach((milestone, i) => {
+    if (!goalIds.has(milestone.goalId)) {
+      problems.push({ path: `milestones[${i}].goalId`, message: `目标不存在：${milestone.goalId}` })
+    }
+  })
+  snapshot.tasks.forEach((task, i) => {
+    if (!milestoneIds.has(task.milestoneId)) {
+      problems.push({ path: `tasks[${i}].milestoneId`, message: `里程碑不存在：${task.milestoneId}` })
+    }
+    if (task.roleId && !snapshot.roles.some((role) => role.id === task.roleId)) {
+      problems.push({ path: `tasks[${i}].roleId`, message: `人格不存在：${task.roleId}` })
+    }
+  })
+  snapshot.cycles.forEach((cycle, i) => {
+    if (!goalIds.has(cycle.goalId)) {
+      problems.push({ path: `cycles[${i}].goalId`, message: `目标不存在：${cycle.goalId}` })
+    }
+  })
+  return problems
+}

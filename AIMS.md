@@ -236,3 +236,33 @@
 | **B4** | 提示词库 capability：`work-prompt-catalog` 只读投影 | 🟢 完成 | `ecbcf0e`；`test-work-prompt-catalog` 7 断言；audit:modules 通过 |
 | **B5** | 主理人分派：提示词组装、草案预览、事务应用 | 🟢 完成 | `ecbcf0e` + `5bb759f`；`test-dispatch-prompt` 10 断言；真实 API（DeepSeek）联调：20 条建议、容量感知备注、roleId 落库、手动保护生效 |
 | **B6** | 回归、文档与验收：全量测试、双端构建、台账回填 | 🟢 完成 | `npm test` 44 文件 0 失败；audit 通过；Windows Tauri debug `app.exe` 与 Android `app-debug.apk`（1.5.0/10）构建通过（JDK 21 已装，2026-11-20 已将用户级 JAVA_HOME 永久指向 jdk-21.0.12.101-hotspot，构建不再需手动覆盖）；USER_GUIDE 5.6；SPEC 状态升 v1.0；台账回填；Android 真机验收（Redmi K20 Pro）：建目标/任务→激活上板→换列→手写人格分配→重启持久 全链路通过，验收数据已还原 |
+
+## 十二、当前阶段：v1.6.0 MCP 平台化 v1 只读（Mod 07+，2026-11-20）
+
+### 12.1 目标
+
+让外部 agent（Claude Desktop / Claude Code 等）读取 Knapsack 数据：App 内「导出工作区快照」（`workspace-snapshot.v1`）+ 独立 Node 包 `knapsack-mcp`（stdio MCP server，四只读工具）。设计以 [BOARD_MODULE_SPEC.md](docs/BOARD_MODULE_SPEC.md) §12 为准。写回（goal-pack 文件桥）与实时 IPC 排 v2/v3。
+
+### 12.2 边界
+
+1. 快照导出是唯一数据通路：MCP server 只读导出文件，不接触 IndexedDB，不提供写入/删除类工具。
+2. 导出含个人目标数据，仅用户手动触发；配置 MCP 即授权本机 agent 读取该文件（README 与导出提示均注明）。
+3. 快照契约是新增投影（goal/task/role 运行时 schema 复用 + 提示词目录投影），不改 goal-pack.v1 导入契约。
+4. 写回必须经 App 导入管线（预览 + 确认），agent 无法绕过人直接改库。
+
+### 12.3 验收（Checkpoint）
+
+1. `npm test`（含 `test-workspace-snapshot` 契约测试）/ `audit:modules` / `build` 全绿；`packages/knapsack-mcp` 自测（投影 + stdio 冒烟）通过。
+2. App 内「导出快照」生成 `workspace-snapshot.v1` JSON：五类实体（goals/milestones/tasks/cycles/roles）+ prompts 目录 + 看板字段齐全，引用完整性校验内建。
+3. `knapsack-mcp` 注册到 Claude Desktop / Claude Code 后，四工具（get_goals/get_board/get_roles/get_prompts）返回与 App 内数据一致，agent 能正确作答。
+4. 无快照/损坏快照时返回明确引导文案，不抛协议错误；快照超 7 天未更新给出提示。
+5. 只读保证：工具面无写入/删除，annotations readOnlyHint=true。
+6. 台账与文档（USER_GUIDE、SPEC §12 状态）回填完成。
+
+### 12.4 进度台账
+
+| 任务编号 | 任务名称 | 状态 | 证据 |
+|---|---|---|---|
+| **M1** | 快照契约与导出：workspace-snapshot.v1 schema、buildWorkspaceSnapshot、导出按钮、Tauri fs/dialog 插件落盘 | 🟢 完成 | `test-workspace-snapshot` 16 断言通过；`npm test` 45 文件 0 失败；audit/build 通过；浏览器实测导出（3 目标/7 里程碑/21 任务/3 周期/1 人格），修复浏览器分支误报「已取消」；Tauri 侧插件注册与 capabilities 权限配置完成 |
+| **M2** | knapsack-mcp server：packages/knapsack-mcp（stdio、四只读工具、空态引导、staleness 提示） | 🟢 完成 | 包内 `npm test` 11 项通过（fixture 投影 8 + stdio 协议冒烟 3）；golden fixture 双端共测（App 侧生成，MCP 侧校验） |
+| **M3** | 联调验收与文档：Claude Code 注册配置、USER_GUIDE 5.7、SPEC §12 状态、台账回填 | 🟢 完成（真实会话工具调用待用户重启复核） | `.mcp.json`（仓库根，相对入口 + `~` 展开）；loader 对真实验收快照（`~/.knapsack/knapsack-snapshot.json`）四工具投影输出正确；USER_GUIDE 5.7；SPEC 状态升 v1.1；cargo check 通过（fs/dialog 插件编译）；台账回填 |

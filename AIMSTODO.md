@@ -276,3 +276,33 @@
 - `[2026-11-20]` B6 进行中：版本升至 1.5.0（package.json / tauri.conf.json / Android versionCode 10）；Windows Tauri debug 构建通过（app.exe）；Android assembleDebug 通过（app-debug.apk 5.2M，2026-11-20 01:04，环境已收口：用户级 JAVA_HOME 永久指向 jdk-21.0.12.101-hotspot，复测 assembleDebug BUILD SUCCESSFUL）；USER_GUIDE 新增 5.6 看板章节；AIMS 台账 B1–B5 回填完成。
 - `[2026-11-20 01:05]` B6 完成：Windows Tauri debug `app.exe` 与 Android `app-debug.apk`（1.5.0 / versionCode 10）双端构建通过；AIMSTODO/USER_GUIDE/SPEC 状态全部回填。
 - `[2026-11-20 08:48]` Android 真机验收完成（Redmi K20 Pro，3a3e1f52，v1.5.0/versionCode 10）：①看板空状态与工具条渲染正常；②UI 建目标 DeviceTestGoal + 里程碑 MS1（验收 Acceptance1）+ 任务 DeviceTaskOne；③目标状态「草稿→进行中」后任务卡出现在看板「待办」列；④卡片下拉换列 待办→进行中 即时生效；⑤「管理人格」手写创建 TestRole（专职/容量 2），卡片人格框分配成功（显示 TestRole + 专职标签）；⑥force-stop 重启后换列与 roleId 均持久（IndexedDB 落库确认）；⑦草稿目标卡片显示「送入看板」按钮。验收后数据已还原：目标切回草稿（看板随之清空）、TestRole 已停用（提示「历史任务保留标记」）。JDK 21 环境收口后 gradle 构建不再需手动 JAVA_HOME 覆盖。v1.5.0 看板与主理人全量验收完毕。
+
+## 十二、v1.6.0 MCP 平台化 v1 只读（2026-11-20 启动）
+
+> 设计依据：[BOARD_MODULE_SPEC.md](docs/BOARD_MODULE_SPEC.md) §12；AIMS 台账见第十二节 M1–M3。
+> 关键设计修正：goal-pack.v1 是导入草稿格式（无 status/roleId），导出快照需新建 workspace-snapshot.v1 投影契约，复用既有运行时 schema。
+
+### 阶段 M1：快照契约与导出（2026-11-20 完成）
+- [x] M1.1 workspace-snapshot.v1 Zod schema（复用 idea/goal/milestone/task/cycle/boardRole schema + snapshotPrompt 投影）+ verifySnapshotReferences 引用完整性
+- [x] M1.2 buildWorkspaceSnapshot 服务（Dexie 六表 + capability 提示词目录投影，schema 校验 + 引用校验双闸）
+- [x] M1.3 导出 UI：GoalsView 工具栏「导出快照」按钮；Tauri 桌面走 plugin-dialog 保存框 + plugin-fs 写盘（capabilities 放开 Documents/Downloads/Home），Android/Web 走 fileBridge 兜底
+- [x] M1.4 验证：test-workspace-snapshot 16 断言（契约/引用负例/降级/readSnapshotTables/fixture 固化）；npm test 45 文件 0 失败；audit:modules 通过；build 通过
+
+### 阶段 M2：knapsack-mcp server（2026-11-20 完成）
+- [x] M2.1 packages/knapsack-mcp 独立包（@modelcontextprotocol/sdk 1.32 + zod，Node ≥18，bin: knapsack-mcp）
+- [x] M2.2 快照读取 loader：--snapshot 参数 / KNAPSACK_SNAPSHOT 环境变量 / 默认 ~/.knapsack 路径解析；缺失/损坏/格式不符返回引导文案，7 天未更新给 staleness 提示
+- [x] M2.3 四只读工具：knapsack_get_goals（目标树投影）/ knapsack_get_board（三列+容量占用+未分配）/ knapsack_get_roles（charter+提示词可用性）/ knapsack_get_prompts（目录+单条正文），annotations readOnlyHint
+- [x] M2.4 验证：包内 npm test 11 项通过（投影 8 + stdio initialize/tools/list/tools/call 协议冒烟 3）；golden fixture 双端共测
+- [x] M2.5 README：数据通路、Claude Desktop / Claude Code 配置示例、隐私提醒、只读保证
+
+### 阶段 M3：联调验收与文档（进行中）
+- [x] M3.1 Claude Code 注册：仓库根 .mcp.json（相对入口 + ~/.knapsack 快照路径 + ~ 展开）；loader 投影对真实验收快照四工具输出正确（stdio 协议冒烟见 M2.4）；会话内工具调用待重启加载 .mcp.json 后复核
+- [x] M3.2 USER_GUIDE 5.7 章节：导出快照与外部 Agent（MCP）——步骤/隐私/只读保证
+- [x] M3.3 SPEC §12 状态更新（待立项 → v1 已实现）+ AIMS/AIMSTODO 台账回填
+
+### 执行证据
+
+- `[2026-11-20]` 立项：草案经用户确认（M1 开工、Tauri 插件落盘方案）。设计要点：workspace-snapshot.v1 新投影契约；audit:modules 只扫 src/mods/，packages/ 不受门禁约束；契约防漂移用 golden fixture（App 侧 test-workspace-snapshot 生成，MCP 侧测试消费）。
+- `[2026-11-20]` M1 完成：npm install @tauri-apps/plugin-fs + plugin-dialog（前端）+ cargo add tauri-plugin-fs/dialog（Rust 侧 2.7.1/2.8.4）；lib.rs Builder 注册两插件；capabilities/default.json 加 dialog:default + fs:default（$DOCUMENT/$DOWNLOAD/$HOME）。浏览器实测（Chrome，localhost:5173）：导出快照生成 knapsack-snapshot-20261120.json，内容 3 目标/7 里程碑/21 任务/3 周期/1 人格 + workspace-snapshot.v1 头，下载名与 toast 正确；发现并修复浏览器分支误报「已取消导出」（saveSnapshotFile 返回 cancelled 显式区分）。test-workspace-snapshot 16 断言全过；npm test 45 文件 0 失败；audit/build 通过。
+- `[2026-11-20]` M2 完成：knapsack-mcp 包脚手架 + loader + tools 投影 + index（McpServer.registerTool × 4，StdioServerTransport）；修复 node --test 目录式运行在 Windows 的兼容问题（改 glob 展开）。包内 11 测试全过，含真实 stdio 子进程协议冒烟（initialize → tools/list 四工具只读断言 → tools/call 返回快照数据 → 无快照引导文案）。
+- `[2026-11-20]` M3 完成（真实会话复核除外）：仓库根新增 `.mcp.json`（command node + 相对入口 packages/knapsack-mcp/src/index.js + `--snapshot ~/.knapsack/knapsack-snapshot.json`）；loader 补 `~/` 展开。直接改用户级 `~/.claude.json` 被权限分类器拦截（合理），改走项目级 `.mcp.json`，Claude Code 在仓库内启动即加载。验收快照写入 `~/.knapsack/knapsack-snapshot.json`（结构同真实数据：1 目标/1 里程碑/2 任务/1 人格/1 周期），四工具投影输出正确（get_goals 树、get_board doing=1 todo=1 容量 1/2、get_roles charter、get_prompts 空目录）；stdio 协议冒烟 3 项已过。USER_GUIDE 5.7、SPEC §12 状态 v1.1、AIMS 台账 M1–M3 回填。`cargo check` 通过（fs 2.7.1 / dialog 2.8.4 编译）；`npm test` 45 文件 0 失败；`npm run build` 通过；MCP 包 11 测试通过。待办：会话内首次 MCP 工具调用需重启 Claude Code 加载 .mcp.json 后复核；版本号（1.6.0）与发布门禁未动。

@@ -1,0 +1,25 @@
+{
+  "name": "knapsack-mcp",
+  "version": "0.1.0",
+  "description": "Knapsack 工作区快照的只读 MCP server（stdio）",
+  "type": "module",
+  "bin": {
+    "knapsack-mcp": "src/index.js"
+  },
+  "main": "src/index.js",
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.0"
+  }
+}

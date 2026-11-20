@@ -1,6 +1,6 @@
 # 看板与主理人（Goals Board）设计规格
 
-> 状态：v1.0（B1–B5 已实现并验收，2026-11-20；§12 MCP 平台化待立项）
+> 状态：v1.1（B1–B5 已实现并验收，2026-11-20；§12 MCP 平台化 v1 只读已实现，M1–M2 完成，M3 联调验收进行中）
 > 适用版本：v1.5.0 起
 > 定位：目标系统（Mod 07）的扩展，不新开模块
 > 关联文档：[GOALS_MODULE_SPEC.md](./GOALS_MODULE_SPEC.md)、[V4_MODULARIZATION_PLAN.md](./V4_MODULARIZATION_PLAN.md)
@@ -415,7 +415,7 @@ npm run build
 
 ## 12. 平台化：让任意 Agent 读写 Knapsack（MCP）
 
-> 状态：方向确认（2026-11-20），实现排在看板 P4 之后
+> 状态：v1 已实现（2026-11-20）：M1 快照导出（workspace-snapshot.v1）、M2 knapsack-mcp 四只读工具完成；M3 真实环境注册验收进行中
 > 范围：目标/看板数据开放给外部 agent；UI 不变
 
 用户定位：**Knapsack 是平台，AI 只是搭好的执行层**。任何 agent（Claude Desktop、Claude Code、Codex 等）都应能读取本软件的数据来干活。MVP 已有 `goal-pack.v1` 粘贴导入与 `knapsack-goal` skill，但只有「人搬数据」这一个方向；本节定义「agent 直接读写」的方向。

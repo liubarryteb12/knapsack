@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "knapsack": {
+      "command": "node",
+      "args": [
+        "packages/knapsack-mcp/src/index.js",
+        "--snapshot",
+        "~/.knapsack/knapsack-snapshot.json"
+      ]
+    }
+  }
+}
