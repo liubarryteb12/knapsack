@@ -235,4 +235,4 @@
 | **B3** | 角色管理：列表/新建/编辑、提示词库导入人格、失效降级 | 🟢 完成 | `ecbcf0e`；弹窗 CRUD + capability 导入；失效人格黄标 charter 兜底 |
 | **B4** | 提示词库 capability：`work-prompt-catalog` 只读投影 | 🟢 完成 | `ecbcf0e`；`test-work-prompt-catalog` 7 断言；audit:modules 通过 |
 | **B5** | 主理人分派：提示词组装、草案预览、事务应用 | 🟢 完成 | `ecbcf0e` + `5bb759f`；`test-dispatch-prompt` 10 断言；真实 API（DeepSeek）联调：20 条建议、容量感知备注、roleId 落库、手动保护生效 |
-| **B6** | 回归、文档与验收：全量测试、双端构建、台账回填 | 🟢 完成 | `npm test` 44 文件 0 失败；audit 通过；Windows Tauri debug `app.exe` 与 Android `app-debug.apk`（1.5.0/10）构建通过（Android 需 JDK 21，本机 JAVA_HOME=17 需覆盖）；USER_GUIDE 5.6；SPEC 状态升 v1.0；台账回填 |
+| **B6** | 回归、文档与验收：全量测试、双端构建、台账回填 | 🟢 完成 | `npm test` 44 文件 0 失败；audit 通过；Windows Tauri debug `app.exe` 与 Android `app-debug.apk`（1.5.0/10）构建通过（JDK 21 已装，2026-11-20 已将用户级 JAVA_HOME 永久指向 jdk-21.0.12.101-hotspot，构建不再需手动覆盖）；USER_GUIDE 5.6；SPEC 状态升 v1.0；台账回填；Android 真机验收（Redmi K20 Pro）：建目标/任务→激活上板→换列→手写人格分配→重启持久 全链路通过，验收数据已还原 |
