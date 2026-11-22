@@ -242,7 +242,7 @@ Task:       todo → doing → done | dropped
 - AI 导入带嵌套 `children` 的任务包后，可在详情页按同样的按钮继续精修层级，无需重新导入
 - v1.5.4 起移除「周期安排」区：周期/看板改为在 Claude Desktop 侧完成；导入包里的 `cycles` 仍照常落库，只是 App 内不再提供视图
 
-组件拆分：`IdeaPool.vue`、`MilestoneList.vue`、`TaskRow.vue`、`CycleBoard.vue`、`ImportPackModal.vue`、`AiWizardModal.vue`、`MindMapView.vue`。
+组件拆分：`IdeaPool.vue`、`MilestoneList.vue`、`TaskRow.vue`、`ImportPackModal.vue`、`AiWizardModal.vue`、`MindMapView.vue`。
 
 思维导图的数据与布局是纯函数，放在 `services/mindmapTree.ts`（树构建、Markdown/OPML 导出）与 `services/mindmapLayout.ts`（布局、连线路径、配色、SVG/PNG 序列化）；组件只负责交互与 SVG 渲染。导出格式与 dsh-mindmap 对齐：Markdown 为嵌套 `- ` 列表 + `> ` 备注，OPML 使用 `text` / `_note` / `_checked` 属性。目标卡片上的「导图」按钮会切到导图栏目并聚焦该目标。示例数据由 `services/sampleGoalPack.ts` 生成，走既有 goal-pack 导入管线写库。
 

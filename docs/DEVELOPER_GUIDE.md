@@ -83,11 +83,7 @@ npm run audit:modules
 npm run mod:sync
 ```
 
-当前发布门禁见：
-
-- `docs/RELEASE_GATE_v1.3.0.md`
-- `docs/KNOWN_ISSUES_v1.3.0.md`
-- `docs/V4_MODULARIZATION_PLAN.md`
+发布流程以 [GitHub Releases](https://github.com/liubarryteb12/knapsack/releases) 为准；历史版本的发布门禁与已知问题见 `legacy/v1.x-docs` 分支。
 
 ## 代码结构
 
@@ -157,10 +153,4 @@ npm run mod:sync
 
 ## 发布文档
 
-历史版本和本版本发布信息位于 `docs/`：
-
-- `RELEASE_NOTES_v1.3.0.md`
-- `RELEASE_GATE_v1.3.0.md`
-- `KNOWN_ISSUES_v1.3.0.md`
-- `MODULE_INTERACTION_MATRIX.md`
-- `V4_MODULARIZATION_PLAN.md`
+各版本发布说明与产物见 [GitHub Releases](https://github.com/liubarryteb12/knapsack/releases)。现行文档位于 `docs/`（用户教程、开发者指南、模块交互矩阵、目标模块规格）；v1.1–v1.4 的历史版本文档保留在 `legacy/v1.x-docs` 分支。
