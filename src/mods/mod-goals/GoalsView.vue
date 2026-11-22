@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   NButton,
@@ -11,6 +11,7 @@ import {
   useMessage,
 } from 'naive-ui'
 import { Plus, Download, Sparkles, Target, Upload } from '@lucide/vue'
+import Sortable from 'sortablejs'
 import UiEmptyState from '../../components/ui/UiEmptyState.vue'
 import UiPageHeader from '../../components/ui/UiPageHeader.vue'
 import { modRegistry } from '../../core/bootMods'
@@ -24,18 +25,25 @@ import {
   serializeSnapshot,
 } from './services/workspaceSnapshot'
 import { saveSnapshotFile, snapshotFilename } from './services/snapshotFile'
-import CycleBoard from './components/CycleBoard.vue'
-import BoardView from './components/BoardView.vue'
 import AiWizardModal from './components/AiWizardModal.vue'
 import ImportPackModal from './components/ImportPackModal.vue'
 import GoalCard from './components/GoalCard.vue'
 import IdeaPool from './components/IdeaPool.vue'
+import MindMapView from './components/MindMapView.vue'
 
 const store = useGoalsStore()
 const router = useRouter()
 const message = useMessage()
 
-const activeTab = ref<'goals' | 'ideas' | 'cycles' | 'board'>('goals')
+const activeTab = ref<'goals' | 'mindmap' | 'ideas'>('goals')
+/** 从目标卡片「导图」入口跳转时锁定的目标 */
+const mindmapGoalId = ref('')
+
+/** 打开某目标的思维导图：切到导图栏目并聚焦该目标 */
+function openMindmap(goalId: string) {
+  mindmapGoalId.value = goalId
+  activeTab.value = 'mindmap'
+}
 const showCreate = ref(false)
 const showImport = ref(false)
 const showAi = ref(false)
@@ -56,18 +64,12 @@ const priorityOptions = [
   { label: 'P3 有空再说', value: 3 },
 ]
 
-const cycleGoalId = ref('')
-const cycleGoalOptions = computed(() =>
-  store.goalsSorted.map((goal) => ({ label: goal.title, value: goal.id })),
-)
-
 onMounted(async () => {
   try {
     if (!store.loaded) await store.loadAll()
   } catch (error) {
     message.error(error instanceof Error ? error.message : String(error))
   }
-  cycleGoalId.value ||= store.goalsSorted[0]?.id ?? ''
 })
 
 function open(goalId: string) {
@@ -145,15 +147,54 @@ async function exportSnapshot() {
   }
 }
 
-async function sendToBoard(goalId: string) {
-  try {
-    await store.updateGoal(goalId, { status: 'active' })
-    message.success('已送入看板')
-    activeTab.value = 'board'
-  } catch (error) {
-    message.error(error instanceof Error ? error.message : String(error))
-  }
+// ---------- 目标卡片拖拽排序 ----------
+
+const goalGrid = ref<HTMLElement | null>(null)
+let goalSortable: Sortable | null = null
+
+function destroyGoalSortable() {
+  goalSortable?.destroy()
+  goalSortable = null
 }
+
+function setupGoalSortable() {
+  destroyGoalSortable()
+  if (!goalGrid.value) return
+  goalSortable = Sortable.create(goalGrid.value, {
+    animation: 150,
+    handle: '.goal-card-drag',
+    draggable: '.goal-card',
+    ghostClass: 'drag-ghost',
+    onEnd(evt) {
+      // 数据模型是唯一事实源：先还原 DOM，再交给 Vue 重渲染
+      const from = evt.oldIndex ?? -1
+      const parent = evt.from as HTMLElement
+      if (from >= 0 && evt.oldIndex !== evt.newIndex) {
+        parent.insertBefore(evt.item as HTMLElement, parent.children[from] ?? null)
+      }
+      const to = evt.newIndex ?? -1
+      if (from < 0 || to < 0 || from === to) return
+      const ids = store.goalsSorted.map((goal) => goal.id)
+      const [moved] = ids.splice(from, 1)
+      if (moved === undefined) return
+      ids.splice(to, 0, moved)
+      void store.reorderGoals(ids)
+    },
+  })
+}
+
+const goalOrderSignature = computed(() => store.goalsSorted.map((goal) => goal.id).join(','))
+
+watch(
+  [goalOrderSignature, activeTab],
+  () => {
+    if (activeTab.value === 'goals') nextTick(setupGoalSortable)
+    else destroyGoalSortable()
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(destroyGoalSortable)
 </script>
 
 <template>
@@ -189,7 +230,7 @@ async function sendToBoard(goalId: string) {
           <n-button type="primary" @click="showCreate = true">直接新建目标</n-button>
         </UiEmptyState>
 
-        <div v-else class="goal-grid">
+        <div v-else ref="goalGrid" class="goal-grid">
           <GoalCard
             v-for="goal in store.goalsSorted"
             :key="goal.id"
@@ -198,28 +239,17 @@ async function sendToBoard(goalId: string) {
             :milestone-count="store.milestonesOf(goal.id).length"
             :task-count="store.milestonesOf(goal.id).reduce((sum, m) => sum + store.tasksOf(m.id).length, 0)"
             @open="open(goal.id)"
-            @send-to-board="sendToBoard(goal.id)"
+            @mindmap="openMindmap(goal.id)"
           />
         </div>
       </n-tab-pane>
 
+      <n-tab-pane name="mindmap" tab="思维导图">
+        <MindMapView :initial-goal-id="mindmapGoalId" @goal-change="mindmapGoalId = $event" />
+      </n-tab-pane>
+
       <n-tab-pane name="ideas" tab="想法池">
         <IdeaPool @promoted="onPromoted" @ai="onAi" />
-      </n-tab-pane>
-
-      <n-tab-pane name="cycles" tab="周期">
-        <div v-if="store.goalsSorted.length === 0" class="cycle-hint">先创建至少一个目标，才能安排周期。</div>
-        <template v-else>
-          <div class="cycle-picker">
-            <span>选择目标</span>
-            <n-select v-model:value="cycleGoalId" :options="cycleGoalOptions" style="max-width: 320px" />
-          </div>
-          <CycleBoard v-if="cycleGoalId" :goal-id="cycleGoalId" />
-        </template>
-      </n-tab-pane>
-
-      <n-tab-pane name="board" tab="看板">
-        <BoardView @go-create="showCreate = true" />
       </n-tab-pane>
     </n-tabs>
 
@@ -268,19 +298,8 @@ async function sendToBoard(goalId: string) {
   gap: var(--space-4);
 }
 
-.cycle-hint {
-  color: var(--app-muted);
-  font-size: var(--text-sm);
-  padding: var(--space-4) 0;
-}
-
-.cycle-picker {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-bottom: var(--space-4);
-  font-size: var(--text-sm);
-  color: var(--app-muted);
+:deep(.drag-ghost) {
+  opacity: 0.4;
 }
 
 .create-form {

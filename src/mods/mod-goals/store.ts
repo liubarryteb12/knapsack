@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { db } from '../../db'
 import { todayStr } from '../../utils/date'
 import {
+  MAX_TASK_DEPTH,
   goalCompletionRatio,
   newBoardRole,
   newCycle,
@@ -63,12 +64,14 @@ export const useGoalsStore = defineStore('goals', {
         done: 3,
         abandoned: 4,
       }
-      return [...state.goals].sort(
-        (a, b) =>
-          rank[a.status] - rank[b.status] ||
-          a.priority - b.priority ||
-          (a.targetDate ?? '9999-12-31').localeCompare(b.targetDate ?? '9999-12-31'),
-      )
+      // 手动序优先（goalOrder），从未拖过序时回退到状态/优先级自动排序
+      const manual = (a: Goal, b: Goal) =>
+        (a.goalOrder ?? Number.MAX_SAFE_INTEGER) - (b.goalOrder ?? Number.MAX_SAFE_INTEGER)
+      const auto = (a: Goal, b: Goal) =>
+        rank[a.status] - rank[b.status] ||
+        a.priority - b.priority ||
+        (a.targetDate ?? '9999-12-31').localeCompare(b.targetDate ?? '9999-12-31')
+      return [...state.goals].sort((a, b) => manual(a, b) || auto(a, b))
     },
     goalById(state) {
       return (id: string): Goal | undefined => state.goals.find((goal) => goal.id === id)
@@ -77,9 +80,62 @@ export const useGoalsStore = defineStore('goals', {
       return (goalId: string): Milestone[] =>
         state.milestones.filter((m) => m.goalId === goalId).sort((a, b) => a.order - b.order)
     },
+    /** 里程碑下全部任务（含子任务），用于进度、看板与统计 */
     tasksOf(state) {
       return (milestoneId: string): Task[] =>
         state.tasks.filter((t) => t.milestoneId === milestoneId).sort((a, b) => a.order - b.order)
+    },
+    /** 里程碑下的一级任务（parentId 为空） */
+    rootTasksOf(state) {
+      return (milestoneId: string): Task[] =>
+        state.tasks
+          .filter((t) => t.milestoneId === milestoneId && !t.parentId)
+          .sort((a, b) => a.order - b.order)
+    },
+    /** 某个任务的直接子任务 */
+    childTasksOf(state) {
+      return (parentId: string): Task[] =>
+        state.tasks.filter((t) => t.parentId === parentId).sort((a, b) => a.order - b.order)
+    },
+    taskById(state) {
+      return (id: string): Task | undefined => state.tasks.find((t) => t.id === id)
+    },
+    /** 任务深度：里程碑下一级任务为 1 */
+    taskDepth(state) {
+      return (taskId: string): number => {
+        let depth = 0
+        let cursor = state.tasks.find((t) => t.id === taskId)
+        const seen = new Set<string>()
+        while (cursor && !seen.has(cursor.id)) {
+          seen.add(cursor.id)
+          depth++
+          cursor = cursor.parentId ? state.tasks.find((t) => t.id === cursor!.parentId) : undefined
+        }
+        return depth
+      }
+    },
+    /** 任务及其全部子孙 id（含自身） */
+    taskDescendantIds(state) {
+      return (taskId: string): string[] => {
+        const childrenByParent = new Map<string, Task[]>()
+        for (const task of state.tasks) {
+          if (!task.parentId) continue
+          const list = childrenByParent.get(task.parentId)
+          if (list) list.push(task)
+          else childrenByParent.set(task.parentId, [task])
+        }
+        const out: string[] = []
+        const stack = [taskId]
+        const seen = new Set<string>()
+        while (stack.length > 0) {
+          const id = stack.pop()!
+          if (seen.has(id)) continue
+          seen.add(id)
+          out.push(id)
+          for (const child of childrenByParent.get(id) ?? []) stack.push(child.id)
+        }
+        return out
+      }
     },
     cyclesOf(state) {
       return (goalId: string): Cycle[] =>
@@ -249,7 +305,11 @@ export const useGoalsStore = defineStore('goals', {
       priority?: 1 | 2 | 3
     }): Promise<Goal> {
       const goal = newGoal({ ...input, startDate: input.startDate ?? todayStr() })
-      await goalsTable().put(goal)
+      // 已进入手动排序时，新目标追加到末尾，避免插到最前
+      if (this.goals.some((g) => g.goalOrder !== undefined)) {
+        goal.goalOrder = Math.max(-1, ...this.goals.map((g) => g.goalOrder ?? -1)) + 1
+      }
+      await goalsTable().put(plain(goal))
       this.goals = [goal, ...this.goals]
       return goal
     },
@@ -276,6 +336,21 @@ export const useGoalsStore = defineStore('goals', {
       this.cycles = this.cycles.filter((c) => c.goalId !== id)
     },
 
+    /** 手动排序目标：按传入顺序重编 goalOrder；未拖过序的目标在首次排序时一并入册 */
+    async reorderGoals(orderedIds: string[]): Promise<void> {
+      const updates: Goal[] = []
+      orderedIds.forEach((id, index) => {
+        const current = this.goals.find((goal) => goal.id === id)
+        if (current) updates.push({ ...current, goalOrder: index })
+      })
+      if (updates.length === 0) return
+      await db.transaction('rw', goalsTable(), async () => {
+        await goalsTable().bulkPut(plain(updates))
+      })
+      const map = new Map(updates.map((goal) => [goal.id, goal]))
+      this.goals = this.goals.map((goal) => map.get(goal.id) ?? goal)
+    },
+
     // ---------- 里程碑 ----------
 
     async addMilestone(goalId: string, input: { title: string; acceptance: string; targetDate?: string }): Promise<Milestone> {
@@ -294,11 +369,44 @@ export const useGoalsStore = defineStore('goals', {
       this.milestones = this.milestones.map((m) => (m.id === id ? next : m))
     },
 
+    async reorderMilestones(goalId: string, orderedIds: string[]): Promise<void> {
+      const updates: Milestone[] = []
+      orderedIds.forEach((id, index) => {
+        const current = this.milestones.find((m) => m.id === id && m.goalId === goalId)
+        if (current) updates.push({ ...current, order: index })
+      })
+      if (updates.length === 0) return
+      await db.transaction('rw', milestonesTable(), async () => {
+        await milestonesTable().bulkPut(plain(updates))
+      })
+      const map = new Map(updates.map((milestone) => [milestone.id, milestone]))
+      this.milestones = this.milestones.map((milestone) => map.get(milestone.id) ?? milestone)
+    },
+
+    /** 物理删除里程碑并级联其任务，随后重排剩余里程碑序号 */
+    async deleteMilestone(id: string): Promise<void> {
+      const milestone = this.milestones.find((m) => m.id === id)
+      if (!milestone) return
+      const taskIds = this.tasks.filter((t) => t.milestoneId === id).map((t) => t.id)
+      await db.transaction('rw', milestonesTable(), tasksTable(), async () => {
+        if (taskIds.length) await tasksTable().bulkDelete(taskIds)
+        await milestonesTable().delete(id)
+      })
+      this.tasks = this.tasks.filter((t) => t.milestoneId !== id)
+      this.milestones = this.milestones.filter((m) => m.id !== id)
+      const remaining = this.milestonesOf(milestone.goalId).map((m) => m.id)
+      if (remaining.length) await this.reorderMilestones(milestone.goalId, remaining)
+    },
+
     // ---------- 任务 ----------
 
-    async addTask(milestoneId: string, input: { title: string; detail?: string; estimate?: 'S' | 'M' | 'L' }): Promise<Task> {
-      const order = this.tasksOf(milestoneId).length
-      const task = newTask({ milestoneId, ...input, order })
+    async addTask(
+      milestoneId: string,
+      input: { title: string; detail?: string; estimate?: 'S' | 'M' | 'L' },
+      parentId?: string,
+    ): Promise<Task> {
+      const siblings = parentId ? this.childTasksOf(parentId) : this.rootTasksOf(milestoneId)
+      const task = newTask({ milestoneId, parentId, ...input, order: siblings.length })
       await tasksTable().put(task)
       this.tasks = [...this.tasks, task]
       return task
@@ -316,6 +424,30 @@ export const useGoalsStore = defineStore('goals', {
       await this.updateTask(id, { status })
     },
 
+    /** 物理删除任务及其全部子孙，再把同级任务重新编号 */
+    async deleteTask(id: string): Promise<void> {
+      const task = this.tasks.find((t) => t.id === id)
+      if (!task) return
+      const ids = this.taskDescendantIds(id)
+      await tasksTable().bulkDelete(ids)
+      this.tasks = this.tasks.filter((t) => !ids.includes(t.id))
+      await this.renumberSiblings(task.milestoneId, task.parentId)
+    },
+
+    /** 同一父级下的任务按 index 重新编号 */
+    async renumberSiblings(milestoneId: string, parentId?: string): Promise<void> {
+      const list = this.tasks
+        .filter((t) => t.milestoneId === milestoneId && (t.parentId ?? '') === (parentId ?? ''))
+        .sort((a, b) => a.order - b.order)
+      const updates = list
+        .map((task, index) => (task.order === index ? null : { ...task, order: index }))
+        .filter((task): task is Task => task !== null)
+      if (updates.length === 0) return
+      await tasksTable().bulkPut(plain(updates))
+      const map = new Map(updates.map((task) => [task.id, task]))
+      this.tasks = this.tasks.map((task) => map.get(task.id) ?? task)
+    },
+
     async reorderTasks(milestoneId: string, orderedIds: string[]): Promise<void> {
       const updates: Task[] = []
       orderedIds.forEach((id, index) => {
@@ -327,6 +459,77 @@ export const useGoalsStore = defineStore('goals', {
       })
       const map = new Map(updates.map((task) => [task.id, task]))
       this.tasks = this.tasks.map((task) => map.get(task.id) ?? task)
+    },
+
+    /** 缩进：挂到上一个同级任务下面，成为它的最后一个子任务 */
+    async indentTask(id: string): Promise<void> {
+      const task = this.tasks.find((t) => t.id === id)
+      if (!task) throw new Error('任务不存在')
+      const siblings = this.tasks
+        .filter((t) => t.milestoneId === task.milestoneId && (t.parentId ?? '') === (task.parentId ?? ''))
+        .sort((a, b) => a.order - b.order)
+      const index = siblings.findIndex((t) => t.id === id)
+      if (index <= 0) throw new Error('上面没有同级任务，无法缩进')
+      const prev = siblings[index - 1]!
+      if (this.taskDepth(prev.id) >= MAX_TASK_DEPTH) {
+        throw new Error(`最多支持 ${MAX_TASK_DEPTH} 层任务`)
+      }
+      const childCount = this.childTasksOf(prev.id).length
+      await this.updateTask(id, { parentId: prev.id, order: childCount })
+      await this.renumberSiblings(task.milestoneId, task.parentId)
+    },
+
+    /** 提升：变成父任务的下一个同级；本来就在最外层则报错 */
+    async outdentTask(id: string): Promise<void> {
+      const task = this.tasks.find((t) => t.id === id)
+      if (!task) throw new Error('任务不存在')
+      if (!task.parentId) throw new Error('已经在最外层')
+      const parent = this.tasks.find((t) => t.id === task.parentId)
+      if (!parent) {
+        await this.updateTask(id, { parentId: undefined })
+        return
+      }
+      const parentSiblings = this.tasks
+        .filter((t) => t.milestoneId === parent.milestoneId && (t.parentId ?? '') === (parent.parentId ?? ''))
+        .sort((a, b) => a.order - b.order)
+      const insertAt = parentSiblings.findIndex((t) => t.id === parent.id) + 1
+      const ordered = parentSiblings.map((t) => t.id)
+      ordered.splice(insertAt, 0, task.id)
+      const updates: Task[] = []
+      ordered.forEach((tid, index) => {
+        const current = tid === task.id ? task : this.tasks.find((t) => t.id === tid)
+        if (!current) return
+        updates.push({ ...current, parentId: parent.parentId, order: index })
+      })
+      await tasksTable().bulkPut(plain(updates))
+      const map = new Map(updates.map((t) => [t.id, t]))
+      this.tasks = this.tasks.map((t) => map.get(t.id) ?? t)
+      await this.renumberSiblings(task.milestoneId, task.parentId)
+    },
+
+    /** 同级内上下移动（-1 上移，+1 下移） */
+    async moveSibling(id: string, delta: -1 | 1): Promise<void> {
+      const task = this.tasks.find((t) => t.id === id)
+      if (!task) throw new Error('任务不存在')
+      const ids = this.tasks
+        .filter((t) => t.milestoneId === task.milestoneId && (t.parentId ?? '') === (task.parentId ?? ''))
+        .sort((a, b) => a.order - b.order)
+        .map((t) => t.id)
+      const from = ids.indexOf(id)
+      const to = from + delta
+      if (from < 0 || to < 0 || to >= ids.length) return
+      const [moved] = ids.splice(from, 1)
+      if (moved === undefined) return
+      ids.splice(to, 0, moved)
+      const updates = ids
+        .map((tid, index) => {
+          const current = this.tasks.find((t) => t.id === tid)
+          return current ? { ...current, order: index } : null
+        })
+        .filter((t): t is Task => t !== null)
+      await tasksTable().bulkPut(plain(updates))
+      const map = new Map(updates.map((t) => [t.id, t]))
+      this.tasks = this.tasks.map((t) => map.get(t.id) ?? t)
     },
 
     // ---------- 周期 ----------

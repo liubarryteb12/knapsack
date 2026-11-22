@@ -56,6 +56,23 @@ fn deliver_forwarded_prompt_share(link: String) {
   }
 }
 
+/// 把前端选好路径的文件落盘：内容以 base64 传输，避免大图的 JSON 数组开销。
+/// 路径来自系统「另存为」对话框，因此不受 fs 插件 scope 限制。
+#[tauri::command]
+fn save_file_bytes(path: String, contents_base64: String) -> Result<(), String> {
+  use base64::Engine as _;
+  let bytes = base64::engine::general_purpose::STANDARD
+    .decode(contents_base64.as_bytes())
+    .map_err(|e| format!("内容解码失败：{e}"))?;
+  let target = PathBuf::from(&path);
+  if let Some(dir) = target.parent() {
+    if !dir.as_os_str().is_empty() {
+      std::fs::create_dir_all(dir).map_err(|e| format!("创建目录失败：{e}"))?;
+    }
+  }
+  std::fs::write(&target, bytes).map_err(|e| format!("写入失败：{e}"))
+}
+
 #[tauri::command]
 fn prompt_share_ready(app: tauri::AppHandle) {
   if let Some(ready) = WINDOW_READY.get() {
@@ -333,6 +350,7 @@ pub fn run() {
       session::session_status,
       session::session_update_trip,
       prompt_share_ready,
+      save_file_bytes,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

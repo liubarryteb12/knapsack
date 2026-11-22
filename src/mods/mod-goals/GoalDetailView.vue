@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NButton, NInput, NProgress, NSelect, NTag, useMessage } from 'naive-ui'
-import { ArrowLeft, Target } from '@lucide/vue'
+import { NButton, NInput, NPopconfirm, NProgress, NSelect, NTag, useMessage } from 'naive-ui'
+import { ArrowLeft, Target, Trash2 } from '@lucide/vue'
 import UiEmptyState from '../../components/ui/UiEmptyState.vue'
-import CycleBoard from './components/CycleBoard.vue'
 import MilestoneList from './components/MilestoneList.vue'
 import { useGoalsStore } from './store'
 import type { Goal, GoalStatus } from './schema'
@@ -85,6 +84,17 @@ function commitDate(field: 'startDate' | 'targetDate', event: Event) {
 function back() {
   void router.push('/goals')
 }
+
+async function removeGoal() {
+  if (!goal.value) return
+  try {
+    await store.deleteGoal(goal.value.id)
+    message.success('目标已删除')
+    back()
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : String(error))
+  }
+}
 </script>
 
 <template>
@@ -126,6 +136,15 @@ function back() {
             style="width: 130px"
             @update:value="(value: 1 | 2 | 3) => commit({ priority: value })"
           />
+          <n-popconfirm @positive-click="removeGoal">
+            <template #trigger>
+              <n-button size="small" quaternary type="error" title="删除目标">
+                <template #icon><Trash2 :size="16" /></template>
+                删除
+              </n-button>
+            </template>
+            删除目标「{{ goal.title }}」及其所有里程碑、任务和周期？无法恢复。
+          </n-popconfirm>
         </div>
       </div>
 
@@ -187,9 +206,6 @@ function back() {
 
       <h2 class="section-title">里程碑与任务</h2>
       <MilestoneList :goal-id="goal.id" />
-
-      <h2 class="section-title">周期安排</h2>
-      <CycleBoard :goal-id="goal.id" />
     </template>
   </section>
 </template>

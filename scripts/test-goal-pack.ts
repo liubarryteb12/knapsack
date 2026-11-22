@@ -306,6 +306,78 @@ async function main() {
   const finalLocal = await loadLocalSnapshot()
   check('导入不删除本地已有项', finalLocal.milestones.length === 1 && finalLocal.tasks.length === 1)
 
+  console.log('task hierarchy')
+
+  type DeepTask = {
+    externalId: string
+    title: string
+    order?: number
+    children?: DeepTask[]
+  }
+  type DeepPack = {
+    goals: Array<{ milestones: Array<{ tasks: DeepTask[] }> }>
+  }
+
+  const nestedPack = fullPack() as unknown as DeepPack
+  nestedPack.goals[0]!.milestones[0]!.tasks = [
+    {
+      externalId: 'task-collect-topics',
+      title: '收集 20 个读者常见问题',
+      order: 0,
+      children: [
+        {
+          externalId: 'task-reader-questions',
+          title: '翻读者留言',
+          order: 0,
+          children: [{ externalId: 'task-tag-questions', title: '给问题打标签', order: 0 }],
+        },
+        { externalId: 'task-competitor-topics', title: '刷竞品选题', order: 1 },
+      ],
+    },
+  ]
+  const nestedParsed = goalPackSchema.parse(nestedPack)
+  const nestedTasks = nestedParsed.goals[0]!.milestones[0]!.tasks
+  check('子任务可递归解析', nestedTasks[0]!.children.length === 2)
+  check('孙任务可解析', nestedTasks[0]!.children[0]!.children[0]?.externalId === 'task-tag-questions')
+  check('未写 children 时补空数组', nestedTasks[0]!.children[1]!.children.length === 0)
+
+  const buildDeep = (depth: number): DeepTask => {
+    let node: DeepTask = { externalId: `task-d${depth}`, title: `第 ${depth} 层` }
+    for (let i = depth - 1; i >= 1; i--) {
+      node = { externalId: `task-d${i}`, title: `第 ${i} 层`, children: [node] }
+    }
+    return node
+  }
+  const tooDeep = fullPack() as unknown as DeepPack
+  tooDeep.goals[0]!.milestones[0]!.tasks = [buildDeep(6)]
+  expectFail('超过 5 层被拒绝', () => {
+    goalPackSchema.parse(tooDeep)
+  }, '层级最多')
+
+  const tooManyNested = fullPack() as unknown as DeepPack
+  tooManyNested.goals[0]!.milestones[0]!.tasks = Array.from({ length: 5 }, (_, i) => ({
+    externalId: `task-root-${i}`,
+    title: `一级 ${i}`,
+    children: Array.from({ length: 5 }, (_, j) => ({
+      externalId: `task-child-${i}-${j}`,
+      title: `子 ${i}-${j}`,
+    })),
+  }))
+  expectFail('单里程碑任务总量超限被拒绝', () => {
+    goalPackSchema.parse(tooManyNested)
+  }, '最多 25')
+
+  const nestedPlan = await buildImportPlan(goalPackSchema.parse(nestedPack), await loadLocalSnapshot())
+  const parentTask = nestedPlan.tasks.find((task) => task.externalId === 'task-collect-topics')!
+  const childTask = nestedPlan.tasks.find((task) => task.externalId === 'task-reader-questions')!
+  const grandTask = nestedPlan.tasks.find((task) => task.externalId === 'task-tag-questions')!
+  check('导入保留父子关系', childTask.parentId === parentTask.id && grandTask.parentId === childTask.id)
+  check('一级任务没有 parentId', parentTask.parentId === undefined)
+  await commitImport(nestedPlan)
+  const nestedLocal = await loadLocalSnapshot()
+  const savedGrand = nestedLocal.tasks.find((task) => task.externalId === 'task-tag-questions')!
+  check('层级关系落库', Boolean(savedGrand.parentId))
+
   console.log(`\nfailed=${failed}`)
   if (failed > 0) process.exit(1)
 }

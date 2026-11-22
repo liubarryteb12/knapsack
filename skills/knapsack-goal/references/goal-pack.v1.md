@@ -54,7 +54,7 @@
 | `targetDate` | `yyyy-MM-dd` | 否 | |
 | `status` | `todo \| active \| done \| missed` | 否 | 默认 `todo` |
 | `order` | 整数 ≥ 0 | 否 | 从 0 开始 |
-| `tasks` | 数组 | 否 | 最多 5 个 |
+| `tasks` | 数组 | 否 | 一级任务最多 5 个 |
 
 ### goals[].milestones[].tasks[]
 
@@ -67,7 +67,8 @@
 | `dueDate` | `yyyy-MM-dd` | 否 | |
 | `cycleExternalId` | string | 否 | 指向本包或本地周期 |
 | `status` | `todo \| doing \| done \| dropped` | 否 | 默认 `todo` |
-| `order` | 整数 ≥ 0 | 否 | |
+| `order` | 整数 ≥ 0 | 否 | 同级内排序 |
+| `children` | 数组 | 否 | 子任务，结构与父任务相同，可继续嵌套；省略等价于空数组 |
 
 ## cycles[]
 
@@ -86,10 +87,13 @@
 |---|---|
 | 目标数 | 20 |
 | 每目标里程碑 | 6 |
-| 每里程碑任务 | 5 |
+| 每里程碑一级任务 | 5 |
+| 单个父任务下子任务 | 5 |
+| 任务层级深度（里程碑算第 1 级） | 5 |
+| 每里程碑任务总数（含子任务、孙任务） | 25 |
 | 周期数 | 10 |
 
-超限会被整包拒绝，不会截断。
+超限会被整包拒绝，不会截断。层级和总量按整棵树统计。
 
 ## 导入规则（写给理解行为的人）
 
@@ -145,7 +149,16 @@
               "estimate": "M",
               "status": "todo",
               "order": 0,
-              "cycleExternalId": "cycle-w1"
+              "cycleExternalId": "cycle-w1",
+              "children": [
+                {
+                  "externalId": "task-reader-questions",
+                  "title": "翻最近 30 天读者留言",
+                  "estimate": "S",
+                  "status": "todo",
+                  "order": 0
+                }
+              ]
             }
           ]
         }

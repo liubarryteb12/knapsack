@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { NProgress, NTag } from 'naive-ui'
-import { ChevronRight, Target } from '@lucide/vue'
+import { ChevronRight, GripVertical, Network, Target } from '@lucide/vue'
 import type { Goal } from '../schema'
 
 const props = defineProps<{
@@ -11,7 +11,7 @@ const props = defineProps<{
   taskCount: number
 }>()
 
-defineEmits<{ open: []; 'send-to-board': [] }>()
+defineEmits<{ open: []; mindmap: [] }>()
 
 const STATUS_LABEL: Record<Goal['status'], string> = {
   draft: '草稿',
@@ -30,6 +30,9 @@ const progressLabel = computed(() =>
 <template>
   <article class="goal-card" role="button" tabindex="0" @click="$emit('open')" @keydown.enter="$emit('open')">
     <div class="goal-card-head">
+      <span class="goal-card-drag" title="拖动排序">
+        <GripVertical :size="16" />
+      </span>
       <span class="goal-card-icon"><Target :size="18" :stroke-width="2" /></span>
       <div class="goal-card-title-wrap">
         <h3>{{ goal.title }}</h3>
@@ -46,11 +49,12 @@ const progressLabel = computed(() =>
       <span v-if="goal.targetDate" class="goal-card-date">{{ goal.targetDate }}</span>
       <span class="goal-card-space" />
       <button
-        v-if="goal.status === 'draft'"
-        class="goal-card-board"
-        @click.stop="$emit('send-to-board')"
+        class="goal-card-mindmap"
+        title="查看思维导图"
+        @click.stop="$emit('mindmap')"
       >
-        送入看板
+        <Network :size="14" />
+        导图
       </button>
     </div>
 
@@ -88,6 +92,20 @@ const progressLabel = computed(() =>
   display: flex;
   gap: var(--space-3);
   align-items: flex-start;
+}
+
+.goal-card-drag {
+  display: inline-flex;
+  align-items: center;
+  color: var(--app-faint);
+  cursor: grab;
+  touch-action: none;
+  flex: 0 0 auto;
+  margin-top: 4px;
+}
+
+.goal-card-drag:active {
+  cursor: grabbing;
 }
 
 .goal-card-icon {
@@ -145,18 +163,22 @@ const progressLabel = computed(() =>
   flex: 1;
 }
 
-.goal-card-board {
-  border: 1px solid var(--app-accent-border);
+.goal-card-mindmap {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: 1px solid var(--app-border);
   border-radius: var(--radius-sm);
-  background: var(--app-accent-tint);
-  color: var(--app-accent);
+  background: transparent;
+  color: var(--app-text-secondary);
   font-size: var(--text-xs);
-  padding: 2px 10px;
+  padding: 2px 8px;
   cursor: pointer;
 }
 
-.goal-card-board:hover {
-  filter: brightness(1.05);
+.goal-card-mindmap:hover {
+  border-color: var(--app-accent-border);
+  color: var(--app-accent);
 }
 
 .goal-card-progress {

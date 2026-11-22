@@ -165,7 +165,7 @@ async function exportPublic() {
     const text = serializePublicFile(snap)
     const res = await saveTextFile(publicFileName(props.team.name, snap.version), text)
     if (!res.ok) {
-      message.error(res.error ?? '导出失败')
+      if (!res.cancelled) message.error(res.error ?? '导出失败')
       return
     }
     if (res.warning) message.warning(`已写入文件，但分享未完成：${res.warning}`)

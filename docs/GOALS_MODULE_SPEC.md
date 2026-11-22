@@ -21,7 +21,7 @@ Knapsack 目前负责"记录已经发生和即将发生的事情"（行程、每
 
 ### MVP 包含
 
-- 想法池与目标树（目标 → 里程碑 → 任务 → 周期安排）
+- 想法池与目标树（目标 → 里程碑 → 任务，任务可继续嵌套子任务）
 - App 内两轮 AI 拆解（澄清问题 → 四层结构）
 - 粘贴式导入外部 `goal-pack.v1`，带预览与确认
 - 导入幂等与导入历史
@@ -93,13 +93,14 @@ interface Milestone {
 interface Task {
   id: string
   milestoneId: string
+  parentId?: string          // 子任务指向上级任务；为空即里程碑下的一级任务
   title: string              // 动词开头，可独立执行
   detail: string
   estimate: Estimate
   dueDate?: string
   cycleId?: string           // 为空表示未排期
   status: TaskStatus
-  order: number
+  order: number              // 同级内排序，跨层级互不影响
   externalId?: string
 }
 
@@ -138,12 +139,16 @@ type GoalDraft = Omit<Goal, 'id' | 'createdAt' | 'updatedAt' | 'sourceIdeaId'> &
   milestones: Array<
     Omit<Milestone, 'id' | 'goalId'> & {
       externalId: string
-      tasks: Array<Omit<Task, 'id' | 'milestoneId'> & {
-        externalId: string
-        cycleExternalId?: string  // 指向本包或本地已有周期
-      }>
+      tasks: TaskDraft[]
     }
   >
+}
+
+// 任务可无限嵌套，children 省略等价于空数组；旧包（无 children）照常导入
+type TaskDraft = Omit<Task, 'id' | 'milestoneId' | 'parentId'> & {
+  externalId: string
+  cycleExternalId?: string  // 指向本包或本地已有周期
+  children?: TaskDraft[]
 }
 
 type CycleDraft = Omit<Cycle, 'id'> & {
@@ -161,7 +166,7 @@ type CycleDraft = Omit<Cycle, 'id'> & {
 3. 同一包内 `externalId` 全局唯一（跨 ideas/goals/milestones/tasks/cycles）。
 4. 跨实体引用必须可解析：`ideas[].goalExternalId`、`cycles[].goalExternalId`、`tasks[].cycleExternalId` 必须能在本包中找到，或能在本地已有数据中找到。
 5. 日期格式 `yyyy-MM-dd`；`startDate ≤ targetDate`；周期 `endDate ≥ startDate`。
-6. 规模上限：`goals.length ≤ 20`，每个目标 `milestones.length ≤ 6`，每个里程碑 `tasks.length ≤ 5`，`cycles.length ≤ 10`。超限直接拒绝，不做截断。
+6. 规模上限：`goals.length ≤ 20`，每个目标 `milestones.length ≤ 6`，`cycles.length ≤ 10`；任务按层级计——每个里程碑下**一级任务 ≤ 5**、**单个父任务下子任务 ≤ 5**、**任务层级 ≤ 5 级**（里程碑算第 1 级）、**单个里程碑任务总数 ≤ 25**。超限直接拒绝，不做截断。
 7. `externalId` 缺失时导入器按「目标标题 slug + 路径哈希」补齐，并在预览页标注「自动补 ID」。
 8. 导入时按 `externalId` 全局匹配，不区分 `source`；命中即更新，未命中即新增。
 
@@ -179,7 +184,8 @@ Task:       todo → doing → done | dropped
 导入时状态规则：
 
 - 新建项采用包内 status；未提供则取默认值（Idea → `raw`，Goal → `draft`，Milestone → `todo`，Task → `todo`）。
-- 已存在项（按 `externalId` 命中）**只更新内容字段**（title/why/successCriteria/acceptance/detail/estimate/dates/focus/order），**永不覆盖本地 status**。
+- 已存在项（按 `externalId` 命中）**只更新内容字段**（title/why/successCriteria/acceptance/detail/estimate/dates/focus/order/parentId），**永不覆盖本地 status**。
+- 任务的 `parentId` 由包内 `children` 嵌套深度推导：一级任务不写 `parentId`，子任务指向父任务落库后的本地 `id`；层级关系随导入一起落库。
 - 新包中消失的里程碑或任务不做删除；预览页提示「本次未包含 N 个已有项」，由用户手动处理。
 
 ### 3.5 派生规则（不落库）
@@ -223,17 +229,22 @@ Task:       todo → doing → done | dropped
 | 标签 | 内容 |
 |---|---|
 | 目标树 | 目标卡片列表，按状态、优先级筛选；卡片显示标题、进度条、目标日期、里程碑数。右上角两个入口：「AI 拆解」「导入」 |
+| 思维导图 | 两种模式：单个目标聚焦（默认，选中目标后以该目标为根画「目标→里程碑→任务→子任务…」，子任务按层级继续向下展开）与多目标合成；支持折叠/展开、缩放、拖拽平移、适配画布；可导出 SVG / PNG / Markdown / OPML（桌面端弹系统「另存为」，位置自选）；侧栏顶部常驻「载入示例」，空库时也会提示，一键写入 3 个示例目标 |
 | 想法池 | 想法列表，按 status 筛选；每条支持「补充澄清」「晋级为目标」「搁置」「删除」 |
-| 周期 | 周期看板：选择目标与周期，展示 focus 与已排期任务；未排期任务列在侧栏，可点选加入周期（移动端用「加入」按钮，桌面端可选拖拽） |
 
 `GoalDetailView.vue`：
 
-- 目标头：标题、why、successCriteria、日期、状态切换、实时进度条
+- 目标头：标题、why、successCriteria、日期、状态切换、实时进度条；支持删除目标（级联里程碑、任务、周期）
 - 里程碑列表：可折叠，每个里程碑显示 acceptance、targetDate、进度；展开后是任务清单
-- 任务行内联编辑；支持新增/排序/改状态
-- 底部周期条：本目标下的周期列表与聚焦点
+- 里程碑支持内联改名/验收口径/日期/状态，支持新增、删除（级联任务）与拖拽/按钮排序
+- 任务行内联编辑（标题/状态）；详情、工作量、截止日走编辑弹窗；支持新增、删除、同级上下移动
+- 大纲式层级编辑：任务行带「缩进 / 提升 / 加子任务」三个按钮，缩进即挂到上一个同级任务下，提升即回到父任务的同级；子任务按深度缩进渲染（每级 20px），删除父任务级联删除全部子孙。**同级顺序用「上移/下移」按钮调整（不再拖拽跨层级）**；同一层级内最多 5 个任务、深度最多 5 级（里程碑算第 1 级）
+- AI 导入带嵌套 `children` 的任务包后，可在详情页按同样的按钮继续精修层级，无需重新导入
+- v1.5.4 起移除「周期安排」区：周期/看板改为在 Claude Desktop 侧完成；导入包里的 `cycles` 仍照常落库，只是 App 内不再提供视图
 
-组件拆分：`IdeaPool.vue`、`MilestoneList.vue`、`TaskRow.vue`、`CycleBoard.vue`、`ImportPackModal.vue`、`AiWizardModal.vue`。
+组件拆分：`IdeaPool.vue`、`MilestoneList.vue`、`TaskRow.vue`、`CycleBoard.vue`、`ImportPackModal.vue`、`AiWizardModal.vue`、`MindMapView.vue`。
+
+思维导图的数据与布局是纯函数，放在 `services/mindmapTree.ts`（树构建、Markdown/OPML 导出）与 `services/mindmapLayout.ts`（布局、连线路径、配色、SVG/PNG 序列化）；组件只负责交互与 SVG 渲染。导出格式与 dsh-mindmap 对齐：Markdown 为嵌套 `- ` 列表 + `> ` 备注，OPML 使用 `text` / `_note` / `_checked` 属性。目标卡片上的「导图」按钮会切到导图栏目并聚焦该目标。示例数据由 `services/sampleGoalPack.ts` 生成，走既有 goal-pack 导入管线写库。
 
 ### 5.3 导入管线
 

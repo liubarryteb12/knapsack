@@ -4,9 +4,9 @@ import type { ModManifest } from '../../core/modRegistry'
 const manifest: ModManifest = {
   id: 'mod-goals',
   name: '目标',
-  version: '1.5.0',
+  version: '1.5.4',
   schemaRevision: 2,
-  description: '想法池、目标树与周期安排，支持 AI 拆解与 goal-pack 导入',
+  description: '想法池、目标树、思维导图与层级任务，支持 AI 拆解与 goal-pack 导入',
   enabledByDefault: true,
   dbStores: [
     {

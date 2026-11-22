@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { NButton, NInput, NPopconfirm, NSelect, NTag, useMessage } from 'naive-ui'
-import { ArrowUpRight, Lightbulb, Plus, Sparkles } from '@lucide/vue'
+import { NButton, NInput, NModal, NPopconfirm, NSelect, NTag, useMessage } from 'naive-ui'
+import { ArrowUpRight, Lightbulb, Pencil, Plus, Sparkles } from '@lucide/vue'
 import UiEmptyState from '../../../components/ui/UiEmptyState.vue'
 import { useGoalsStore } from '../store'
 import type { Idea, IdeaStatus } from '../schema'
@@ -74,6 +74,37 @@ async function remove(idea: Idea) {
   await store.deleteIdea(idea.id)
   message.success('已删除')
 }
+
+// ---------- 编辑想法 ----------
+
+const showEdit = ref(false)
+const editingIdea = ref<Idea | null>(null)
+const editTitle = ref('')
+const editRaw = ref('')
+
+function openEdit(idea: Idea) {
+  editingIdea.value = idea
+  editTitle.value = idea.title
+  editRaw.value = idea.raw
+  showEdit.value = true
+}
+
+async function saveEdit() {
+  const idea = editingIdea.value
+  if (!idea) return
+  const title = editTitle.value.trim()
+  if (!title) {
+    message.warning('想法标题不能为空')
+    return
+  }
+  try {
+    await store.updateIdea(idea.id, { title, raw: editRaw.value.trim() })
+    showEdit.value = false
+    message.success('已保存')
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : String(error))
+  }
+}
 </script>
 
 <template>
@@ -116,6 +147,10 @@ async function remove(idea: Idea) {
           <n-tag v-for="tag in idea.tags" :key="tag" size="tiny" :bordered="false">{{ tag }}</n-tag>
         </div>
         <div class="idea-item-actions">
+          <n-button size="tiny" quaternary @click="openEdit(idea)">
+            <template #icon><Pencil :size="14" /></template>
+            编辑
+          </n-button>
           <n-button size="tiny" quaternary @click="clarify(idea)">
             {{ idea.status === 'clarified' ? '退回原始' : '标记已澄清' }}
           </n-button>
@@ -149,6 +184,30 @@ async function remove(idea: Idea) {
         </div>
       </li>
     </ul>
+
+    <n-modal v-model:show="showEdit" preset="card" title="编辑想法" style="max-width: 560px">
+      <div class="idea-edit-form">
+        <label>
+          <span>标题</span>
+          <n-input v-model:value="editTitle" :maxlength="120" placeholder="一句话说清这个想法" />
+        </label>
+        <label>
+          <span>原始描述</span>
+          <n-input
+            v-model:value="editRaw"
+            type="textarea"
+            :autosize="{ minRows: 4, maxRows: 10 }"
+            placeholder="背景、约束、讨论纪要"
+          />
+        </label>
+      </div>
+      <template #footer>
+        <div class="idea-edit-footer">
+          <n-button @click="showEdit = false">取消</n-button>
+          <n-button type="primary" @click="saveEdit">保存</n-button>
+        </div>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -206,5 +265,25 @@ async function remove(idea: Idea) {
   display: flex;
   gap: var(--space-1);
   flex-wrap: wrap;
+}
+
+.idea-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.idea-edit-form label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--app-muted);
+}
+
+.idea-edit-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
 }
 </style>

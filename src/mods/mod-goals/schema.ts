@@ -13,7 +13,14 @@ export const GOAL_PACK_SCHEMA_VERSION = 1
 
 export const MAX_GOALS = 20
 export const MAX_MILESTONES_PER_GOAL = 6
+/** 每个里程碑下的一级任务上限 */
 export const MAX_TASKS_PER_MILESTONE = 5
+/** 每个任务下的直接子任务上限 */
+export const MAX_CHILD_TASKS = 5
+/** 任务嵌套深度上限（里程碑下的一级任务算第 1 层） */
+export const MAX_TASK_DEPTH = 5
+/** 单个里程碑下的任务总数上限（含所有子孙） */
+export const MAX_TASKS_PER_MILESTONE_TOTAL = 25
 export const MAX_CYCLES = 10
 
 // ---------- 基础类型 ----------
@@ -182,6 +189,7 @@ export const goalSchema = z.object({
   targetDate: goalDateSchema.optional(),
   status: goalStatusSchema.default('draft'),
   priority: prioritySchema.default(2),
+  goalOrder: z.number().int().min(0).optional(),
   sourceIdeaId: z.string().optional(),
   externalId: externalIdSchema.optional(),
   source: goalSourceSchema.default('manual'),
@@ -203,6 +211,8 @@ export const milestoneSchema = z.object({
 export const taskSchema = z.object({
   id: z.string().min(1),
   milestoneId: z.string().min(1),
+  /** 子任务指向父任务；缺省 = 里程碑下的一级任务（旧数据天然满足） */
+  parentId: z.string().min(1).optional(),
   title: z.string().trim().min(1, '任务标题不能为空'),
   detail: z.string().default(''),
   estimate: estimateSchema.default('M'),
@@ -239,16 +249,36 @@ export const ideaDraftSchema = z.object({
   goalExternalId: externalIdSchema.optional(),
 })
 
-export const taskDraftSchema = z.object({
-  externalId: externalIdSchema,
-  title: z.string().trim().min(1, '任务标题不能为空'),
-  detail: z.string().default(''),
-  estimate: estimateSchema.default('M'),
-  dueDate: goalDateSchema.optional(),
-  cycleExternalId: externalIdSchema.optional(),
-  status: taskStatusSchema.default('todo'),
-  order: z.number().int().min(0).default(0),
-})
+/** 任务草稿：children 递归表达子任务（AI 拆解包与人工粘贴共用同一结构） */
+export interface TaskDraft {
+  externalId: string
+  title: string
+  detail: string
+  estimate: z.infer<typeof estimateSchema>
+  dueDate?: string
+  cycleExternalId?: string
+  status: TaskStatus
+  order: number
+  /** 子任务（可省略，解析后统一为数组） */
+  children?: TaskDraft[]
+}
+
+export const taskDraftSchema: z.ZodType<TaskDraft> = z.lazy(() =>
+  z.object({
+    externalId: externalIdSchema,
+    title: z.string().trim().min(1, '任务标题不能为空'),
+    detail: z.string().default(''),
+    estimate: estimateSchema.default('M'),
+    dueDate: goalDateSchema.optional(),
+    cycleExternalId: externalIdSchema.optional(),
+    status: taskStatusSchema.default('todo'),
+    order: z.number().int().min(0).default(0),
+    children: z
+      .array(taskDraftSchema)
+      .max(MAX_CHILD_TASKS, `每个任务最多 ${MAX_CHILD_TASKS} 个子任务`)
+      .default([]),
+  }),
+) as z.ZodType<TaskDraft>
 
 export const milestoneDraftSchema = z.object({
   externalId: externalIdSchema,
@@ -293,12 +323,14 @@ function collectExternalIds(pack: z.infer<typeof goalPackBaseSchema>): Array<{ i
     entries.push({ id: goal.externalId, path: `goals[${gi}].externalId` })
     goal.milestones.forEach((milestone, mi) => {
       entries.push({ id: milestone.externalId, path: `goals[${gi}].milestones[${mi}].externalId` })
-      milestone.tasks.forEach((task, ti) =>
-        entries.push({
-          id: task.externalId,
-          path: `goals[${gi}].milestones[${mi}].tasks[${ti}].externalId`,
-        }),
-      )
+      const walk = (tasks: readonly TaskDraft[], prefix: string): void => {
+        tasks.forEach((task, ti) => {
+          const path = `${prefix}[${ti}].externalId`
+          entries.push({ id: task.externalId, path })
+          walk(task.children ?? [], `${prefix}[${ti}].children`)
+        })
+      }
+      walk(milestone.tasks, `goals[${gi}].milestones[${mi}].tasks`)
     })
   })
   pack.cycles.forEach((cycle, i) => entries.push({ id: cycle.externalId, path: `cycles[${i}].externalId` }))
@@ -360,7 +392,44 @@ export const goalPackSchema = goalPackBaseSchema.superRefine((pack, ctx) => {
       })
     }
   }
+
+  // 子任务层级：深度与总量都要受控，避免 AI 输出无限嵌套
+  for (const [gi, goal] of pack.goals.entries()) {
+    for (const [mi, milestone] of goal.milestones.entries()) {
+      let total = 0
+      let maxDepth = 0
+      const walk = (tasks: readonly TaskDraft[], depth: number): void => {
+        for (const task of tasks) {
+          total++
+          maxDepth = Math.max(maxDepth, depth)
+          walk(task.children ?? [], depth + 1)
+        }
+      }
+      walk(milestone.tasks, 1)
+      if (maxDepth > MAX_TASK_DEPTH) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `任务层级最多 ${MAX_TASK_DEPTH} 层，当前 ${maxDepth} 层`,
+          path: ['goals', gi, 'milestones', mi, 'tasks'],
+        })
+      }
+      if (total > MAX_TASKS_PER_MILESTONE_TOTAL) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `单个里程碑下最多 ${MAX_TASKS_PER_MILESTONE_TOTAL} 个任务（含子任务），当前 ${total} 个`,
+          path: ['goals', gi, 'milestones', mi, 'tasks'],
+        })
+      }
+    }
+  }
 })
+
+/** 递归统计任务草稿总数（含子任务）。 */
+export function countTaskDrafts(tasks: readonly TaskDraft[]): number {
+  let total = 0
+  for (const task of tasks) total += 1 + countTaskDrafts(task.children ?? [])
+  return total
+}
 
 export type GoalPack = z.infer<typeof goalPackSchema>
 export type Idea = z.infer<typeof ideaSchema>
@@ -371,7 +440,6 @@ export type Cycle = z.infer<typeof cycleSchema>
 export type IdeaDraft = z.infer<typeof ideaDraftSchema>
 export type GoalDraft = z.infer<typeof goalDraftSchema>
 export type MilestoneDraft = z.infer<typeof milestoneDraftSchema>
-export type TaskDraft = z.infer<typeof taskDraftSchema>
 export type CycleDraft = z.infer<typeof cycleDraftSchema>
 export type IdeaStatus = z.infer<typeof ideaStatusSchema>
 export type GoalStatus = z.infer<typeof goalStatusSchema>
@@ -408,13 +476,15 @@ export function verifyExternalReferences(pack: GoalPack, known: Iterable<string>
   }
   for (const [gi, goal] of pack.goals.entries()) {
     for (const [mi, milestone] of goal.milestones.entries()) {
-      for (const [ti, task] of milestone.tasks.entries()) {
-        if (task.cycleExternalId && !knownSet.has(task.cycleExternalId)) {
-          fail(
-            `goals[${gi}].milestones[${mi}].tasks[${ti}].cycleExternalId 指向不存在的周期：${task.cycleExternalId}`,
-          )
+      const walk = (tasks: readonly TaskDraft[], prefix: string): void => {
+        for (const [ti, task] of tasks.entries()) {
+          if (task.cycleExternalId && !knownSet.has(task.cycleExternalId)) {
+            fail(`${prefix}[${ti}].cycleExternalId 指向不存在的周期：${task.cycleExternalId}`)
+          }
+          walk(task.children ?? [], `${prefix}[${ti}].children`)
         }
       }
+      walk(milestone.tasks, `goals[${gi}].milestones[${mi}].tasks`)
     }
   }
 }
@@ -505,6 +575,7 @@ export function newMilestone(
 export function newTask(
   input: {
     milestoneId: string
+    parentId?: string
     title: string
     detail?: string
     estimate?: z.infer<typeof estimateSchema>
@@ -518,6 +589,7 @@ export function newTask(
   return taskSchema.parse({
     id: nanoid(10),
     milestoneId: input.milestoneId,
+    parentId: input.parentId,
     title: input.title,
     detail: input.detail ?? '',
     estimate: input.estimate ?? 'M',

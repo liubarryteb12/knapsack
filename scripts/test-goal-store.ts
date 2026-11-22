@@ -67,16 +67,102 @@ async function main() {
   await store.removeTaskFromCycle(task2.id)
   check('任务可撤回周期', store.tasks.find((t) => t.id === task2.id)?.cycleId === undefined)
 
+  console.log('edit, reorder & delete')
+
+  await store.reorderMilestones(goal.id, [second.id, milestone.id])
+  check(
+    '里程碑可上下重排',
+    store.milestonesOf(goal.id).map((m) => m.id).join(',') === `${second.id},${milestone.id}`,
+  )
+
+  const extraTask = await store.addTask(milestone.id, { title: '临时任务' })
+  const milestoneTasks = store.tasksOf(milestone.id)
+  check('新任务追加到末尾', milestoneTasks[milestoneTasks.length - 1]?.id === extraTask.id)
+
+  await store.reorderTasks(milestone.id, [extraTask.id, task.id])
+  check(
+    '任务可上下重排',
+    store.tasksOf(milestone.id).map((t) => t.id).join(',') === `${extraTask.id},${task.id}`,
+  )
+
+  await store.deleteTask(extraTask.id)
+  check(
+    '任务可删除并重排',
+    store.tasksOf(milestone.id).length === 1 && store.tasksOf(milestone.id)[0]?.order === 0,
+  )
+
+  const tempMilestone = await store.addMilestone(goal.id, { title: '临时里程碑', acceptance: '验证删除' })
+  await store.addTask(tempMilestone.id, { title: '临时任务 2' })
+  await store.deleteMilestone(tempMilestone.id)
+  check(
+    '里程碑可删除并级联任务',
+    store.milestonesOf(goal.id).length === 2 &&
+      store.tasks.filter((t) => t.milestoneId === tempMilestone.id).length === 0,
+  )
+
+  console.log('task hierarchy')
+
+  const root1 = await store.addTask(milestone.id, { title: '根一' })
+  const root2 = await store.addTask(milestone.id, { title: '根二' })
+  await store.indentTask(root2.id)
+  check('缩进后挂到上一个同级下', store.taskById(root2.id)?.parentId === root1.id)
+  check('缩进后不再是一级任务', store.rootTasksOf(milestone.id).length === 2)
+
+  const childA = await store.addTask(milestone.id, { title: '子一' }, root1.id)
+  const childB = await store.addTask(milestone.id, { title: '子二' }, root1.id)
+  check('可直接添加子任务', store.childTasksOf(root1.id).length === 3)
+  await store.outdentTask(childB.id)
+  check('提升后回到父级的同级', store.taskById(childB.id)?.parentId === undefined)
+  await store.moveSibling(childB.id, -1)
+  check('同级上移生效', store.rootTasksOf(milestone.id)[1]?.id === childB.id)
+
+  let indentBlocked = false
+  try {
+    await store.indentTask(store.rootTasksOf(milestone.id)[0]!.id)
+  } catch {
+    indentBlocked = true
+  }
+  check('第一个同级不能缩进', indentBlocked)
+
+  check('深度计算正确', store.taskDepth(childA.id) === 2 && store.taskDepth(root1.id) === 1)
+  check('子孙 id 收集完整', store.taskDescendantIds(root1.id).sort().join(',') === [root1.id, root2.id, childA.id].sort().join(','))
+
+  await store.deleteTask(root1.id)
+  check(
+    '删除父任务级联子孙',
+    !store.taskById(root1.id) && !store.taskById(childA.id) && !store.taskById(root2.id),
+  )
+  check('删除后同级序号连续', store.rootTasksOf(milestone.id).every((t, i) => t.order === i))
+
+  console.log('goal ordering')
+
+  const goalB = await store.createGoal({ title: '第二个目标', priority: 3 })
+  const goalC = await store.createGoal({ title: '第三个目标', priority: 1 })
+  check('未拖序时按优先级自动排序', store.goalsSorted[0]?.id === goalC.id)
+
+  await store.reorderGoals([goalB.id, goal.id, goalC.id])
+  check(
+    '目标可手动重排',
+    store.goalsSorted.map((g) => g.id).join(',') === `${goalB.id},${goal.id},${goalC.id}`,
+  )
+  check('手动序落在 goalOrder', store.goalById(goalB.id)?.goalOrder === 0)
+
+  const goalD = await store.createGoal({ title: '追加目标' })
+  check('手动排序后新目标追加到末尾', store.goalsSorted[store.goalsSorted.length - 1]?.id === goalD.id)
+
   console.log('persistence')
 
   setActivePinia(createPinia())
   const reloaded = useGoalsStore()
   await reloaded.loadAll()
-  check('刷新后数据仍在', reloaded.goals.length === 1 && reloaded.tasks.length === 2)
+  check(
+    '刷新后数据仍在',
+    reloaded.goals.length === 4 && reloaded.tasks.length === store.tasks.length,
+  )
 
   console.log('cascade delete')
 
-  await reloaded.deleteGoal(goal.id)
+  for (const item of [goal, goalB, goalC, goalD]) await reloaded.deleteGoal(item.id)
   check('删除目标级联清理四层', reloaded.goals.length === 0 && reloaded.milestones.length === 0 && reloaded.tasks.length === 0 && reloaded.cycles.length === 0)
 
   console.log(`\nfailed=${failed}`)

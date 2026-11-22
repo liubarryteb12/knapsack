@@ -230,7 +230,7 @@ const layerLabel: Record<ClarificationQuestion['layer'], string> = {
   goal: '目标',
   milestone: '里程碑',
   task: '任务',
-  cycle: '周期',
+  cycle: '任务',
 }
 </script>
 
@@ -245,7 +245,7 @@ const layerLabel: Record<ClarificationQuestion['layer'], string> = {
 
       <template v-if="step === 'input'">
         <p class="wizard-hint">
-          写清楚现状、想要的结果和已知约束。AI 会先问 3–5 个澄清问题，再拆成目标、里程碑、任务与周期。
+          写清楚现状、想要的结果和已知约束。AI 会先问 3–5 个澄清问题，再拆成目标、里程碑与可分层级的任务。
         </p>
         <n-input
           v-model:value="ideaText"

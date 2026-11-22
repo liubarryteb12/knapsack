@@ -477,7 +477,7 @@ async function exportMyReports() {
     const text = serializeSubmissionFile(props.team.teamId, mine, me.value?.name ?? '')
     const res = await saveTextFile(submissionFileName(props.team.name, me.value?.name ?? '成员'), text)
     if (!res.ok) {
-      message.error(res.error ?? '导出失败')
+      if (!res.cancelled) message.error(res.error ?? '导出失败')
       return
     }
     if (res.warning) message.warning(`已写入文件，但分享未完成：${res.warning}`)

@@ -16,6 +16,7 @@ import {
   type Idea,
   type Milestone,
   type Task,
+  type TaskDraft,
 } from '../schema'
 import { sha256Hex } from './ids'
 
@@ -288,37 +289,26 @@ export async function buildImportPlan(pack: GoalPack, local: LocalSnapshot): Pro
     }
   }
 
-  // ---------- 任务 ----------
+  // ---------- 任务（含子任务，深度优先展开） ----------
   const tasks: Task[] = []
   for (const goalDraft of pack.goals) {
     for (const milestoneDraft of goalDraft.milestones) {
       const milestoneId = idMap.get(milestoneDraft.externalId)
       if (!milestoneId) throw new GoalPackError(`里程碑「${milestoneDraft.title}」未解析出本地 id`)
-      for (const draft of milestoneDraft.tasks) {
-        const cycleId = draft.cycleExternalId ? idMap.get(draft.cycleExternalId) : undefined
-        if (draft.cycleExternalId && !cycleId) {
-          throw new GoalPackError(`任务「${draft.title}」找不到所属周期：${draft.cycleExternalId}`)
-        }
-        const existing = existingTasks.get(draft.externalId)
-        if (existing) {
-          const next: Task = {
-            ...existing,
-            milestoneId,
-            title: draft.title,
-            detail: draft.detail,
-            estimate: draft.estimate,
-            dueDate: draft.dueDate,
-            cycleId,
-            order: draft.order,
-            externalId: draft.externalId,
+
+      const walk = (drafts: readonly TaskDraft[], parentId: string | undefined): void => {
+        for (const draft of drafts) {
+          const cycleId = draft.cycleExternalId ? idMap.get(draft.cycleExternalId) : undefined
+          if (draft.cycleExternalId && !cycleId) {
+            throw new GoalPackError(`任务「${draft.title}」找不到所属周期：${draft.cycleExternalId}`)
           }
-          tasks.push(next)
-          counts.tasks.update++
-          idMap.set(draft.externalId, existing.id)
-        } else {
-          const next = newTask(
-            {
+          const existing = existingTasks.get(draft.externalId)
+          let taskId: string
+          if (existing) {
+            const next: Task = {
+              ...existing,
               milestoneId,
+              parentId,
               title: draft.title,
               detail: draft.detail,
               estimate: draft.estimate,
@@ -326,14 +316,34 @@ export async function buildImportPlan(pack: GoalPack, local: LocalSnapshot): Pro
               cycleId,
               order: draft.order,
               externalId: draft.externalId,
-            },
-            now,
-          )
-          tasks.push({ ...next, status: draft.status })
-          counts.tasks.create++
-          idMap.set(draft.externalId, next.id)
+            }
+            tasks.push(next)
+            counts.tasks.update++
+            taskId = existing.id
+          } else {
+            const next = newTask(
+              {
+                milestoneId,
+                parentId,
+                title: draft.title,
+                detail: draft.detail,
+                estimate: draft.estimate,
+                dueDate: draft.dueDate,
+                cycleId,
+                order: draft.order,
+                externalId: draft.externalId,
+              },
+              now,
+            )
+            tasks.push({ ...next, status: draft.status })
+            counts.tasks.create++
+            taskId = next.id
+          }
+          idMap.set(draft.externalId, taskId)
+          walk(draft.children ?? [], taskId)
         }
       }
+      walk(milestoneDraft.tasks, undefined)
     }
   }
 
@@ -379,9 +389,18 @@ export async function buildImportPlan(pack: GoalPack, local: LocalSnapshot): Pro
 
   // ---------- 未包含的已有项 ----------
   const packMilestoneIds = new Set(pack.goals.flatMap((g) => g.milestones.map((m) => m.externalId)))
-  const packTaskIds = new Set(
-    pack.goals.flatMap((g) => g.milestones.flatMap((m) => m.tasks.map((t) => t.externalId))),
-  )
+  const packTaskIds = new Set<string>()
+  for (const goal of pack.goals) {
+    for (const milestone of goal.milestones) {
+      const walk = (drafts: readonly TaskDraft[]): void => {
+        for (const draft of drafts) {
+          packTaskIds.add(draft.externalId)
+          walk(draft.children ?? [])
+        }
+      }
+      walk(milestone.tasks)
+    }
+  }
   const importedGoalIds = new Set(goals.map((goal) => goal.id))
   const missingMilestones = local.milestones.filter(
     (milestone) =>

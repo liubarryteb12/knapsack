@@ -109,7 +109,7 @@ npm run build
 
 **关键实现点**
 - 所有写操作 `await db.transaction('rw', ...)`，失败回滚
-- 删除采用状态标记（`abandoned` / `dropped`）而非物理删除；仅「删除想法」允许物理删除并二次确认
+- 删除分两种：放弃/搁置走状态标记（`abandoned` / `dropped`）；目标、里程碑、任务提供物理删除入口并二次确认（用于清理 AI 导入的错误项，删除里程碑会级联其任务）
 - `promoteIdea` 在一个事务内：建目标 → 想法置 `promoted` 并回填 `goalId`
 - 派生进度在 getter 中计算，不落库
 
